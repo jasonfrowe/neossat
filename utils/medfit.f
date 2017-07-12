@@ -95,7 +95,7 @@ C USES select
          d=y(j)-(b*x(j)+aa)
          abdev=abdev+abs(d)
          if (y(j).ne.0.) d=d/abs(y(j))
-         if (abs(d).gt.EPS) sum=sum+x(j)*sign(1.0,d)
+         if (abs(d).gt.EPS) sum=sum+x(j)*sign(1.0d0,d)
  12   enddo
       rofunc=sum
       return
