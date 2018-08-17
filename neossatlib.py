@@ -212,8 +212,9 @@ def imagestat(scidata,bpix):
 
 def plot_histogram(scidata,imstat,sigscalel,sigscaleh):
     plt.figure(figsize=(12,6)) #adjust size of figure
-    vmin=imstat[2]-imstat[3]*sigscalel
-    vmax=imstat[2]+imstat[3]*sigscaleh
+    flat=scidata.flatten()
+    vmin=np.min(flat[flat > imstat[2]-imstat[3]*sigscalel])
+    vmax=np.max(flat[flat < imstat[2]+imstat[3]*sigscaleh])
     image_hist = plt.hist(scidata.flatten(), 100, range=(vmin,vmax))
     plt.xlabel('Image Counts (ADU)')
     plt.ylabel('Number Count')
