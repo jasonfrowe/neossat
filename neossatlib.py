@@ -13,7 +13,7 @@ def read_fitsdata(filename):
     hdulist = fits.open(filename) #open the FITS file
     scidata = hdulist[0].data #extract the Image
     scidata_float=scidata.astype(float)
-
+    hdulist.close()
     return scidata_float;
 
 def read_file_list(filelist):
@@ -243,14 +243,14 @@ def fouriercor(scidata_in,a):
     #print(aph[0])
     xoff=aph[0][0] #Apply offsets
     yoff=aph[0][1]
-    model=neo.fourierd2d(a,xn,yn,xoff,yoff)
+    model=fourierd2d(a,xn,yn,xoff,yoff)
     scidata_cor=scidata_in-model
 
     return scidata_cor;
 
 def overscan_cor(scidata_c,overscan,a,bpix):
     scidata_co=fouriercor(scidata_c,a)
-    #imstat=neo.imagestat(scidata_co,bpix)
+    #imstat=imagestat(scidata_co,bpix)
     #plot_image(scidata_co,imstat,-0.2,3.0)
     #print(imstat)
     
@@ -264,7 +264,7 @@ def overscan_cor(scidata_c,overscan,a,bpix):
     for i in range(xn):
         scidata_cor[i,:]=scidata_co[i,:]-row_cor[i]
     #imstat=imagestat(scidata_cor,bpix)
-    #neo.plot_image(scidata_cor,imstat,-0.2,3.0)
+    #plot_image(scidata_cor,imstat,-0.2,3.0)
     #print(imstat)
     
     return scidata_cor;
