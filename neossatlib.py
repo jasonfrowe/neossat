@@ -1,7 +1,10 @@
 from astropy.io import fits #astropy modules for FITS IO
 import numpy as np
+import scipy.optimize as opt # For least-squares fits
+from scipy.fftpack import fft, fft2
 import sys
 import math
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm #for better display of FITS images
 
@@ -9,8 +12,9 @@ def read_fitsdata(filename):
     "Usage scidata=read_fitsdata(filename)"
     hdulist = fits.open(filename) #open the FITS file
     scidata = hdulist[0].data #extract the Image
+    scidata_float=scidata.astype(float)
 
-    return scidata;
+    return scidata_float;
 
 def read_file_list(filelist):
     "Usage files=read_file_list(filelist)"
@@ -97,6 +101,174 @@ def find_intercept_point(m, c, x0, y0):
     y = (m*x0 + (m**2)*y0 - (m**2)*c)/(1 + m**2) + c
  
     return x, y
+
+def fourierd2d_v1(a,xn,yn,xoff,yoff):
+    tpi=2.0*np.pi
+    m = np.ones([int(xn),int(yn)])*a[0] #Zero point
+    n=len(a) #Number of parameters in model
+    for i in range(xn):
+        for j in range(yn):
+            for k in range(1,n,4):
+                m[i,j]=m[i,j]+a[k]*np.sin(tpi*(a[k+1]*(i-xoff)+a[k+2]*(j-yoff))+a[k+3])
+    return m;
+
+def fourierd2d(a,xn,yn,xoff,yoff):
+    tpi=2.0*np.pi
+    m = np.ones([int(xn)*int(yn)])*a[0] #Zero point
+    n=len(a) #Number of parameters in model
+    for k in range(1,n,4):
+        m+=[ a[k]*np.sin(tpi*(a[k+1]*(i-xoff)+a[k+2]*(j-yoff))+a[k+3]) \
+         for i in range(xn) for j in range(yn)]
+    m=np.reshape(m,(xn,yn))
+    return m;
+
+def func(a,xn,yn,xoff,yoff,overscan):
+    model=fourierd2d(a,xn,yn,xoff,yoff)
+    sqmeanabs=np.sqrt(np.mean(np.abs(overscan)))
+    #diff = np.power(overscan-model,2)/sqmeanabs
+    diff = (overscan-model)/sqmeanabs
+    diffflat=diff.flatten()
+    return diffflat;
+
+def fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=0):
+
+    #Count number of frequencies
+    freqs=0
+
+    #Calculate Median of overscan region
+    med_overscan=np.median(overscan)
+    std_overscan=np.std(overscan-med_overscan)
+    
+    #Size of Overscan
+    xn=overscan.shape[0]
+    yn=overscan.shape[1]
+    
+    #oversampled overscan
+    overscan_os=np.zeros([xn*T,yn*T])
+    overscan_os[:xn,:yn]=np.copy(overscan)
+    
+    #initialize model
+    a=np.zeros(1)
+    model=np.zeros([xn,yn])
+    
+    #Frequency Grid 
+    xf = np.linspace(0.0, 1.0/(2.0), T*xn//2)
+    yf = np.linspace(0.0, 1.0/(2.0), T*yn//2)
+    
+    loop=0
+
+    while loop==0:
+        
+        #Remove median, model and then calculate FFT
+        overscan_os[:xn,:yn]=overscan-med_overscan-model
+        ftoverscan=fft2(overscan_os)
+        ftoverscan_abs=np.abs(ftoverscan)/(xn*yn) #Amplitude
+        
+        if info >= 2:
+            #Plot the FFT
+            imstat=imagestat(ftoverscan_abs,bpix)
+            plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn//2,:T*yn//2])),imstat,0.0,10.0)
+        
+        mean_ftoverscan_abs=np.mean(ftoverscan_abs[:T*xn//2,:T*yn//2])
+        std_ftoverscan_abs=np.std(ftoverscan_abs[:T*xn//2,:T*yn//2])
+        if info >= 1:
+            print('mean, std:',mean_ftoverscan_abs,std_ftoverscan_abs)
+            
+        
+        #Locate Frequency with largest amplitude
+        maxamp=np.min(ftoverscan_abs[:T*xn//2,:T*yn//2])
+        for i in range(T*1,T*xn//2):
+            for j in range(T*1,T*yn//2):
+                if ftoverscan_abs[i,j] > maxamp:
+                    maxamp = ftoverscan_abs[i,j]
+                    maxi=i
+                    maxj=j
+                    
+        snr=(ftoverscan_abs[maxi,maxj]-mean_ftoverscan_abs)/std_ftoverscan_abs
+        if info >= 1:
+            print('SNR,i,j,amp: ',snr,maxi,maxj,ftoverscan_abs[maxi,maxj])
+            #print(ftoverscan_abs[maxi,maxj],xf[maxi],yf[maxj],np.angle(ftoverscan[maxi,maxj]))
+        
+        if (snr > snrcut) and (freqs < fmax) :
+            freqs=freqs+1
+            a=np.append(a,[ftoverscan_abs[maxi,maxj],xf[maxi],yf[maxj],np.angle(ftoverscan[maxi,maxj])+np.pi/2])
+            #a1=np.array([ftoverscan_abs[maxi,maxj],xf[maxi],yf[maxj],np.angle(ftoverscan[maxi,maxj])-np.pi/2])
+            #a1=np.append(0.0,a1)
+            if info >= 1:
+                print('Next Mode: (amp,xf,yf,phase)')
+                print(ftoverscan_abs[maxi,maxj],xf[maxi],yf[maxj],np.angle(ftoverscan[maxi,maxj])+np.pi/2)
+            ans=opt.leastsq(func,a,args=(xn,yn,xoff,yoff,overscan-med_overscan),factor=1)
+            #a=np.append(a,ans[0][1:])
+            a=ans[0]
+            model=fourierd2d(a,xn,yn,xoff,yoff)
+            n=len(a)
+            if info >= 1:
+                print("---Solution---")
+                print("zpt: ",a[0])
+                for k in range(1,n,4):
+                    print(a[k],a[k+1],a[k+2],a[k+3])
+                print("--------------")
+                    
+        else:
+            loop=1
+            ##Remove median, model and then calculate FFT
+            #overscan_os[:xn,:yn]=overscan-med_overscan-model
+            #ftoverscan=fft2(overscan_os)
+            #ftoverscan_abs=np.abs(ftoverscan)/(xn*yn) #Amplitude
+            ##Plot the FFT
+            #if info >= 2:
+            #    imstat=imagestat(ftoverscan_abs,bpix)
+            #    plot_image(np.abs(np.transpose(ftoverscan_abs[:T*xn//2,:T*yn//2])),imstat,0.0,10.0)
+            if info >= 1:
+                print('Done')
+
+    return a;
+
+#Determine phase offset for science image
+def funcphase(aoff,a,xn,yn,scidata_in):
+    xoff=aoff[0]
+    yoff=aoff[1]
+    model=fourierd2d(a,xn,yn,xoff,yoff)
+    sqmeanabs=np.sqrt(np.mean(np.abs(scidata_in)))
+    diff = (scidata_in-model)/sqmeanabs
+    diffflat=diff.flatten()
+    return diffflat;
+
+#Apply Fourier correction from overscan
+def fouriercor(scidata_in,a):
+    aoff=np.array([0.0,0.0])
+    xn=scidata_in.shape[0]
+    yn=scidata_in.shape[1]
+    aph=opt.leastsq(funcphase,aoff,args=(a,xn,yn,scidata_in-np.median(scidata_in)),factor=1)
+    #print(aph[0])
+    xoff=aph[0][0] #Apply offsets
+    yoff=aph[0][1]
+    model=neo.fourierd2d(a,xn,yn,xoff,yoff)
+    scidata_cor=scidata_in-model
+
+    return scidata_cor;
+
+def overscan_cor(scidata_c,overscan,a,bpix):
+    scidata_co=fouriercor(scidata_c,a)
+    #imstat=neo.imagestat(scidata_co,bpix)
+    #plot_image(scidata_co,imstat,-0.2,3.0)
+    #print(imstat)
+    
+    #General Overscan correction
+    xn=overscan.shape[0]
+    yn=overscan.shape[1]
+    model=fourierd2d(a,xn,yn,0.0,0.0)
+    overscan_cor=overscan-model
+    row_cor=[np.sum(overscan_cor[i,:])/yn for i in range(xn)]
+    scidata_cor=np.copy(scidata_co)
+    for i in range(xn):
+        scidata_cor[i,:]=scidata_co[i,:]-row_cor[i]
+    #imstat=imagestat(scidata_cor,bpix)
+    #neo.plot_image(scidata_cor,imstat,-0.2,3.0)
+    #print(imstat)
+    
+    return scidata_cor;
+
 
 def darkcorrect(scidata,masterdark,bpix):
     'Usage: m,c=darkcorrect(scidata,masterdark,pbix)'
@@ -211,6 +383,7 @@ def imagestat(scidata,bpix):
     return imstat;
 
 def plot_histogram(scidata,imstat,sigscalel,sigscaleh):
+    matplotlib.rcParams.update({'font.size': 24}) #adjust font
     plt.figure(figsize=(12,6)) #adjust size of figure
     flat=scidata.flatten()
     vmin=np.min(flat[flat > imstat[2]-imstat[3]*sigscalel])
@@ -221,10 +394,15 @@ def plot_histogram(scidata,imstat,sigscalel,sigscaleh):
     plt.show()
 
 def plot_image(scidata,imstat,sigscalel,sigscaleh):
+    eps=1.0e-9
+    sigscalel=-np.abs(sigscalel) #Expected to be negative
+    sigscaleh= np.abs(sigscaleh) #Expected to be positive
+    matplotlib.rcParams.update({'font.size': 24}) #adjust font
     plt.figure(figsize=(20,20)) #adjust size of figure
-    vmin=imstat[2]-imstat[3]*sigscalel
-    vmax=imstat[2]+imstat[3]*sigscaleh
-    imgplot = plt.imshow(scidata[:,:]-imstat[0],norm=LogNorm(),vmin=vmin-imstat[0], vmax=vmax-imstat[0])
+    flat=scidata.flatten()
+    vmin=np.min(flat[flat > imstat[2]+imstat[3]*sigscalel])
+    vmax=np.max(flat[flat < imstat[2]+imstat[3]*sigscaleh])
+    imgplot = plt.imshow(scidata[:,:]-imstat[0],norm=LogNorm(),vmin=vmin-imstat[0]+eps, vmax=vmax-imstat[0]+eps)
     plt.axis((0,scidata.shape[1],0,scidata.shape[0]))
     plt.xlabel("Column (Pixels)")
     plt.ylabel("Row (Pixels)")
