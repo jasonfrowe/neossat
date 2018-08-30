@@ -2,11 +2,131 @@ from astropy.io import fits #astropy modules for FITS IO
 import numpy as np
 import scipy.optimize as opt # For least-squares fits
 from scipy.fftpack import fft, fft2
+import medfit  #Fortran backend for median fits
+from astropy.stats import sigma_clipped_stats
+from photutils import DAOStarFinder
+from photutils import CircularAperture
+from photutils import aperture_photometry
 import sys
 import math
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm #for better display of FITS images
+
+def lightprocess(filename,date,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,photap,bpix):
+    
+    info=0
+        
+    scidata_cord,phot_table,mean,median,std=\
+      clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,photap,bpix)
+         
+    #photall.append(phot_table)
+    #photstat.append([mean,median,std])
+    
+    return [phot_table,date,mean,median,std]
+
+def darkprocess(workdir,darkfile,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,bpix):
+    info=0
+    
+    filename=workdir+darkfile
+    scidata=read_fitsdata(filename)
+    
+    #Crop Science Image
+    sh=scidata.shape
+    strim=np.array([sh[0]-xsc,sh[0],sh[1]-ysc,sh[1]])
+    scidata_c=np.copy(scidata[strim[0]:strim[1],strim[2]:strim[3]]) 
+    
+    #Crop Overscan
+    sh=scidata.shape
+    otrim=np.array([sh[0]-xov,sh[0],0,yov])
+    overscan=np.copy(scidata[otrim[0]:otrim[1],otrim[2]:otrim[3]])
+    mean=0.0
+    for i in range(yov):
+        med=np.median(overscan[:,i])
+        overscan[:,i]=overscan[:,i]-med
+        mean=mean+med
+    mean=mean/yov
+    overscan=overscan+mean  #Add mean back to overscan (this is the BIAS)
+    
+    #Fourier Decomp of overscan
+    a=fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=info)
+    
+    #Apply overscan correction to science raster
+    scidata_cor=overscan_cor(scidata_c,overscan,a,bpix)
+    
+    return scidata_cor
+
+def clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,photap,bpix):
+    
+    scidata=read_fitsdata(filename)
+
+    #Crop Science Image
+    sh=scidata.shape
+    strim=np.array([sh[0]-xsc,sh[0],sh[1]-ysc,sh[1]])
+    scidata_c=np.copy(scidata[strim[0]:strim[1],strim[2]:strim[3]])
+
+    #Crop Overscan
+    sh=scidata.shape
+
+    otrim=np.array([sh[0]-xov,sh[0],0,yov])
+    overscan=np.copy(scidata[otrim[0]:otrim[1],otrim[2]:otrim[3]])
+    mean=0.0
+    for i in range(yov):
+        med=np.median(overscan[:,i])
+        overscan[:,i]=overscan[:,i]-med
+        mean=mean+med
+    mean=mean/yov
+    overscan=overscan+mean  #Add mean back to overscan (this is the BIAS)
+
+    if info >= 2:
+        imstat=imagestat(overscan,bpix)
+        plot_image(np.transpose(overscan),imstat,0.3,3.0)
+
+    #Fourier Decomp of overscan
+    a=fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=info)
+
+    if info >= 2:
+        xn=overscan.shape[0]
+        yn=overscan.shape[1]
+        model=fourierd2d(a,xn,yn,xoff,yoff)
+        imstat=imagestat(overscan-model,bpix)
+        plot_image(np.transpose(overscan-model),imstat,0.3,3.0)
+
+    #Apply overscan correction to science raster
+    scidata_cor=overscan_cor(scidata_c,overscan,a,bpix)
+
+    #Apply Dark correction
+    image1=darkavg
+    mind=darkavg.min()
+    maxd=darkavg.max()
+
+    image2=scidata_cor
+
+    data1=image1.flatten()
+    data2=image2.flatten()
+
+    data1t=data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
+    data2t=data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
+    data1=np.copy(data1t)
+    data2=np.copy(data2t)
+
+    ndata=len(data1)
+    abdev=1.0
+    a,b = medfit.medfit(data1,data2,ndata,abdev)
+
+    scidata_cord=scidata_cor-(a+b*darkavg)
+
+    mean, median, std = sigma_clipped_stats(scidata_cord, sigma=3.0, iters=5)
+
+    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
+    sources = daofind(scidata_cord - median)
+
+    positions = (sources['xcentroid'], sources['ycentroid'])
+    apertures = CircularAperture(positions, r=photap)
+    phot_table = aperture_photometry(scidata_cord-median, apertures)
+
+    return scidata_cord,phot_table,mean,median,std;
+
 
 def read_fitsdata(filename):
     "Usage scidata=read_fitsdata(filename)"
@@ -152,8 +272,9 @@ def fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=0):
     model=np.zeros([xn,yn])
     
     #Frequency Grid 
-    xf = np.linspace(0.0, 1.0/(2.0), T*xn//2)
-    yf = np.linspace(0.0, 1.0/(2.0), T*yn//2)
+    #xf = np.linspace(0.0, 1.0/(2.0), T*xn//2)
+    xf = np.append(np.linspace(0.0, 1.0/2.0, T*xn//2),-np.linspace(1.0/2.0, 0.0, T*xn//2))
+    yf = np.linspace(0.0, 1.0/2.0, T*yn//2)
     
     loop=0
 
@@ -167,17 +288,17 @@ def fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=0):
         if info >= 2:
             #Plot the FFT
             imstat=imagestat(ftoverscan_abs,bpix)
-            plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn//2,:T*yn//2])),imstat,0.0,10.0)
+            plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn,:T*yn//2])),imstat,0.0,10.0)
         
-        mean_ftoverscan_abs=np.mean(ftoverscan_abs[:T*xn//2,:T*yn//2])
-        std_ftoverscan_abs=np.std(ftoverscan_abs[:T*xn//2,:T*yn//2])
+        mean_ftoverscan_abs=np.mean(ftoverscan_abs[:T*xn,:T*yn//2])
+        std_ftoverscan_abs=np.std(ftoverscan_abs[:T*xn,:T*yn//2])
         if info >= 1:
             print('mean, std:',mean_ftoverscan_abs,std_ftoverscan_abs)
             
         
         #Locate Frequency with largest amplitude
-        maxamp=np.min(ftoverscan_abs[:T*xn//2,:T*yn//2])
-        for i in range(T*1,T*xn//2):
+        maxamp=np.min(ftoverscan_abs[:T*xn,:T*yn//2])
+        for i in range(T*1,T*xn):
             for j in range(T*1,T*yn//2):
                 if ftoverscan_abs[i,j] > maxamp:
                     maxamp = ftoverscan_abs[i,j]
@@ -218,7 +339,7 @@ def fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=0):
             ##Plot the FFT
             #if info >= 2:
             #    imstat=imagestat(ftoverscan_abs,bpix)
-            #    plot_image(np.abs(np.transpose(ftoverscan_abs[:T*xn//2,:T*yn//2])),imstat,0.0,10.0)
+            #    plot_image(np.abs(np.transpose(ftoverscan_abs[:T,:T*yn//2])),imstat,0.0,10.0)
             if info >= 1:
                 print('Done')
 
@@ -391,6 +512,24 @@ def plot_histogram(scidata,imstat,sigscalel,sigscaleh):
     image_hist = plt.hist(scidata.flatten(), 100, range=(vmin,vmax))
     plt.xlabel('Image Counts (ADU)')
     plt.ylabel('Number Count')
+    plt.show()
+
+def plot_image_wsource(scidata,imstat,sigscalel,sigscaleh,sources):
+    eps=1.0e-9
+    sigscalel=-np.abs(sigscalel) #Expected to be negative
+    sigscaleh= np.abs(sigscaleh) #Expected to be positive
+    matplotlib.rcParams.update({'font.size': 24}) #adjust font
+    plt.figure(figsize=(20,20)) #adjust size of figure
+    flat=scidata.flatten()
+    vmin=np.min(flat[flat > imstat[2]+imstat[3]*sigscalel])
+    vmax=np.max(flat[flat < imstat[2]+imstat[3]*sigscaleh])
+    positions = (sources['xcentroid'], sources['ycentroid'])
+    apertures = CircularAperture(positions, r=4.)
+    imgplot = plt.imshow(scidata[:,:]-imstat[0],norm=LogNorm(),vmin=vmin-imstat[0]+eps, vmax=vmax-imstat[0]+eps)
+    apertures.plot(color='red', lw=1.5, alpha=0.5)
+    plt.axis((0,scidata.shape[1],0,scidata.shape[0]))
+    plt.xlabel("Column (Pixels)")
+    plt.ylabel("Row (Pixels)")
     plt.show()
 
 def plot_image(scidata,imstat,sigscalel,sigscaleh):
