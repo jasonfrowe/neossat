@@ -112,7 +112,11 @@ def clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info
 
     ndata=len(data1)
     abdev=1.0
-    a,b = medfit.medfit(data1,data2,ndata,abdev)
+    if ndata > 3:
+        a,b = medfit.medfit(data1,data2,ndata,abdev)
+    else:
+        a=0.0
+        b=1.0
 
     scidata_cord=scidata_cor-(a+b*darkavg)
 
