@@ -13,6 +13,502 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm #for better display of FITS images
 
+def findtrans(nm,matches,x1,y1,x2,y2):
+
+    #pre-allocate arrays
+    #We are solving the problem A.x=b 
+    A=np.zeros([nm,3])
+    bx=np.zeros(nm)
+    by=np.zeros(nm)
+    #set up matricies
+    A[:,0]=1
+    for n in range(nm):
+        A[n,1]=x2[matches[n,1]]
+        A[n,2]=y2[matches[n,1]]
+        bx[n]=x1[matches[n,0]]
+        by[n]=y1[matches[n,0]]
+    
+    #Solve transformation with SVD
+    u, s, vh = np.linalg.svd(A,full_matrices=False)
+    prd=np.transpose(vh)*1/s
+    prd=np.matmul(prd,np.transpose(u))
+    xoff=np.matmul(prd,bx)
+    yoff=np.matmul(prd,by)
+    
+    #Store our solution for output 
+    offset=np.array([xoff[0], yoff[0]])
+    rot=np.array([[xoff[1],xoff[2]],[yoff[1],yoff[2]]])
+    #print(offset)
+    #print(rot)
+    
+    return offset, rot;
+
+def match(x1,y1,x2,y2,eps=0.001):
+
+    #Defaults for return values
+    err=0.0
+    nm=0.0
+    matches=[]
+
+    xmax=np.max(np.concatenate([x1,x2])) #Get max x,y position to get an idea how big the CCD frame is.
+    ymax=np.max(np.concatenate([y1,y2]))
+    xdim=np.power(2,np.floor(np.log2(xmax))+1) #Estimate of CCD dimensions (assumes 2^n size)
+    ydim=np.power(2,np.floor(np.log2(ymax))+1)
+    # tunable parameters for tolerence of matches
+    eps2=eps*xdim*eps*ydim
+
+    nx1=len(x1) #number of stars in frame #1
+    nx2=len(x2) #number of stars in frame #2
+
+    # number of expected triangles = n!/[(n-3)! * 3!] (see Pascals Triangle)
+    ntri1=int(np.math.factorial(nx1)/(np.math.factorial(nx1-3)*6))
+    ntri2=int(np.math.factorial(nx2)/(np.math.factorial(nx2-3)*6))
+
+    # Pre-allocating arrays
+    tA1=np.zeros(ntri1,dtype=int);tA2=np.zeros(ntri1,dtype=int);tA3=np.zeros(ntri1,dtype=int)
+    tB1=np.zeros(ntri2,dtype=int);tB2=np.zeros(ntri2,dtype=int);tB3=np.zeros(ntri2,dtype=int)
+    lpA=np.zeros(ntri1);lpB=np.zeros(ntri2)
+    orA=np.zeros(ntri1,dtype=int);orB=np.zeros(ntri2,dtype=int)
+    RA=np.zeros(ntri1);RB=np.zeros(ntri2)
+    tolRA=np.zeros(ntri1);tolRB=np.zeros(ntri2)
+    CA=np.zeros(ntri1);CB=np.zeros(ntri2)
+    tolCA=np.zeros(ntri1);tolCB=np.zeros(ntri2)
+
+    # make all possible triangles for A set of co-ordinates.
+    nt1=-1 #Count number of triangles
+    for n1 in range(nx1-2):
+        for n2 in range(n1+1,nx1-1):
+            for n3 in range(n2+1,nx1):
+                nt1=nt1+1 # increase counter for triangles
+
+                #calculate distances
+                tp1=np.sqrt(np.power(x1[n1]-x1[n2],2)+np.power(y1[n1]-y1[n2],2))
+                tp2=np.sqrt(np.power(x1[n2]-x1[n3],2)+np.power(y1[n2]-y1[n3],2))
+                tp3=np.sqrt(np.power(x1[n3]-x1[n1],2)+np.power(y1[n3]-y1[n1],2))
+
+                # beware of equal distance cases?
+                if tp1==tp2:
+                    tp1=tp1+0.0001
+                if tp1==tp3:
+                    tp1=tp1+0.0001
+                if tp2==tp3:
+                    tp2=tp2+0.0001
+
+                # there are now six cases
+                if (tp1 > tp2) and (tp2 > tp3):
+                    tA1[nt1]=np.copy(n1); tA2[nt1]=np.copy(n3); tA3[nt1]=np.copy(n2);
+                    r3=np.copy(tp1) #long length, (Equations 2 and 3)
+                    r2=np.copy(tp3) #short side
+                elif (tp1 > tp3) and (tp3 > tp2):
+                    tA1[nt1]=np.copy(n2); tA2[nt1]=np.copy(n3); tA3[nt1]=np.copy(n1);
+                    r3=np.copy(tp1)
+                    r2=np.copy(tp2)
+                elif (tp2 > tp1) and (tp1 > tp3):
+                    tA1[nt1]=np.copy(n3); tA2[nt1]=np.copy(n1); tA3[nt1]=np.copy(n2);
+                    r3=np.copy(tp2)
+                    r2=np.copy(tp3)
+                elif (tp3 > tp1) and (tp1 > tp2):
+                    tA1[nt1]=np.copy(n3); tA2[nt1]=np.copy(n2); tA3[nt1]=np.copy(n1);
+                    r3=np.copy(tp3);
+                    r2=np.copy(tp2);
+                elif (tp2 > tp3) and (tp3 > tp1):
+                    tA1[nt1]=np.copy(n2); tA2[nt1]=np.copy(n1); tA3[nt1]=np.copy(n3);
+                    r3=np.copy(tp2);
+                    r2=np.copy(tp1);
+                elif (tp3 > tp2) and (tp2 > tp1):
+                    tA1[nt1]=np.copy(n1); tA2[nt1]=np.copy(n2); tA3[nt1]=np.copy(n3);
+                    r3=np.copy(tp3);
+                    r2=np.copy(tp1);
+
+                #Equation 1
+                RA[nt1]=r3/r2
+                #Equation 5
+                CA[nt1]=((x1[tA3[nt1]]-x1[tA1[nt1]])*(x1[tA2[nt1]]-x1[tA1[nt1]])+ \
+                    (y1[tA3[nt1]]-y1[tA1[nt1]])*(y1[tA2[nt1]]-y1[tA1[nt1]]))/(r3*r2)
+                #Equation 4
+                fact=np.power(1/r3,2)-CA[nt1]/(r3*r2)+1/np.power(r2,2)
+                tolRA[nt1]=2*np.power(RA[nt1],2)*eps2*fact
+                #Equation 6
+                S2=1-np.power(CA[nt1],2) #Sine squared
+                tolCA[nt1]=2*S2*eps2*fact+3*np.power(CA[nt1],2)*eps2*eps2*np.power(fact,2)
+                #logarithm of triangle perimeter
+                lpA[nt1]=np.log10(tp1+tp2+tp3)
+                #Orientation of triangle (-1=counterclockwise +1=clockwise)
+                orA[nt1]=orient(x1[n1],y1[n1],x1[n2],y1[n2],x1[n3],y1[n3]);
+
+    # make all possible triangles for B set of co-ordinates.
+    nt2=-1 #count number of triangles.
+    for n1 in range(nx2-2):
+        for n2 in range(n1+1,nx2-1):
+            for n3 in range(n2+1,nx2):
+                nt2=nt2+1 #increase counter for triangles.
+
+                # Calculate distances.
+                tp1=np.sqrt(np.power(x2[n1]-x2[n2],2)+np.power(y2[n1]-y2[n2],2))
+                tp2=np.sqrt(np.power(x2[n2]-x2[n3],2)+np.power(y2[n2]-y2[n3],2))
+                tp3=np.sqrt(np.power(x2[n3]-x2[n1],2)+np.power(y2[n3]-y2[n1],2))
+
+                # beware of equal distance cases?
+                if tp1==tp2:
+                    tp1=tp1+0.0001
+                if tp1==tp3:
+                    tp1=tp1+0.0001
+                if tp2==tp3:
+                    tp2=tp2+0.0001
+
+                # there are now six cases
+                if (tp1 > tp2) and (tp2 > tp3):
+                    tB1[nt2]=np.copy(n1); tB2[nt2]=np.copy(n3); tB3[nt2]=np.copy(n2);
+                    r3=np.copy(tp1) #long length, (Equations 2 and 3)
+                    r2=np.copy(tp3) #short side
+                elif (tp1 > tp3) and (tp3 > tp2):
+                    tB1[nt2]=np.copy(n2); tB2[nt2]=np.copy(n3); tB3[nt2]=np.copy(n1);
+                    r3=np.copy(tp1)
+                    r2=np.copy(tp2)
+                elif (tp2 > tp1) and (tp1 > tp3):
+                    tB1[nt2]=np.copy(n3); tB2[nt2]=np.copy(n1); tB3[nt2]=np.copy(n2);
+                    r3=np.copy(tp2)
+                    r2=np.copy(tp3)
+                elif (tp3 > tp1) and (tp1 > tp2):
+                    tB1[nt2]=np.copy(n3); tB2[nt2]=np.copy(n2); tB3[nt2]=np.copy(n1);
+                    r3=np.copy(tp3)
+                    r2=np.copy(tp2)
+                elif (tp2 > tp3) and (tp3 > tp1):
+                    tB1[nt2]=np.copy(n2); tB2[nt2]=np.copy(n1); tB3[nt2]=np.copy(n3);
+                    r3=np.copy(tp2)
+                    r2=np.copy(tp1)
+                elif (tp3 > tp2) and (tp2 > tp1):
+                    tB1[nt2]=np.copy(n1); tB2[nt2]=np.copy(n2); tB3[nt2]=np.copy(n3);
+                    r3=np.copy(tp3)
+                    r2=np.copy(tp1)
+                #Equation 1
+                RB[nt2]=r3/r2;
+                #Equation 5
+                CB[nt2]=((x2[tB3[nt2]]-x2[tB1[nt2]])*(x2[tB2[nt2]]-x2[tB1[nt2]])+ \
+                    (y2[tB3[nt2]]-y2[tB1[nt2]])*(y2[tB2[nt2]]-y2[tB1[nt2]]))/(r3*r2)
+                #Equation 4
+                fact=np.power(1/r3,2)-CB[nt2]/(r3*r2)+1/np.power(r2,2)
+                tolRB[nt2]=2*np.power(RB[nt2],2)*eps2*fact
+                #Equation 6
+                S2=1-np.power(CB[nt2],2) #Sine of angle squared
+                tolCB[nt2]=2*S2*eps2*fact+3*np.power(CB[nt2],2)*eps2*eps2*np.power(fact,2)
+                #logarithm of triangle perimeter
+                lpB[nt2]=np.log10(tp1+tp2+tp3)
+                #Orientation of triangle (-1=counterclockwise +1=clockwise)
+                orB[nt2]=orient(x2[n1],y2[n1],x2[n2],y2[n2],x2[n3],y2[n3]);
+
+    #Scan through the two
+    nmatch=0
+    for n1 in range(nt1):
+        n3=0 # we only want the best matched triangle
+        for n2 in range(nt2):
+            diffR=np.power(RA[n1]-RB[n2],2)
+            if ( diffR < (tolRA[n1]+tolRB[n2]) ) and \
+                ( (np.power(CA[n1]-CB[n2],2)) < (tolCA[n1]+tolCB[n2]) ):
+                if ( RA[n1] < 10 ) and ( RB[n2] < 10):
+                    if n3==0:
+                        nmatch=nmatch+1
+                        n3=1
+    #print("nmatch",nmatch)
+
+    #now we know the number of matches, so we preallocate and repeat
+    #this seems to be faster?!?
+    mA=np.zeros(nmatch,dtype=int) #Store indices at integers
+    mB=np.zeros(nmatch,dtype=int)
+    lmag=np.zeros(nmatch)
+    orcomp=np.zeros(nmatch,dtype=int)
+
+    #repeating the calculation from above.
+    #scan through the two lists and find matches.
+    nmatch=-1
+    diffRold=0
+    for n1 in range(nt1):
+        n3=0 # we only want the best matched triangle
+        for n2 in range(nt2):
+            diffR=np.power(RA[n1]-RB[n2],2)
+            if ( diffR < (tolRA[n1]+tolRB[n2]) ) and \
+                ( (np.power(CA[n1]-CB[n2],2)) < (tolCA[n1]+tolCB[n2]) ):
+                if ( RA[n1] < 10 ) and ( RB[n2] < 10):
+                    if n3==0:
+                        nmatch=nmatch+1
+                        n3=1
+                        mA[nmatch]=np.copy(n1)
+                        mB[nmatch]=np.copy(n2)
+                        lmag[nmatch]=lpA[n1]-lpB[n2]
+                        orcomp[nmatch]=orA[n1]*orB[n2]
+                        diffRold=np.copy(diffR)
+                    else:
+                        if diffR < diffRold:
+                            mA[nmatch]=np.copy(n1)
+                            mB[nmatch]=np.copy(n2)
+                            lmag[nmatch]=lpA[n1]-lpB[n2]
+                            orcomp[nmatch]=orA[n1]*orB[n2]
+                            diffRold=np.copy(diffR)
+
+    #print(nmatch,mA[nmatch],mB[nmatch])
+    nmatchold=0;
+
+    while (nmatch != nmatchold):
+        nplus=np.sum(orcomp==1)
+        nminus=np.sum(orcomp==-1)
+
+        mt=np.abs(nplus-nminus)
+        mf=nplus+nminus-mt
+        if mf > mt:
+            sigma=1
+        elif 0.1*mf > mf:
+            sigma=3
+        else:
+            sigma=2
+        meanmag=np.mean(lmag)
+        stdev=np.std(lmag)
+
+        datacut=(lmag-meanmag <  sigma*stdev)
+        mA=mA[datacut]
+        mB=mB[datacut]
+        lmag=lmag[datacut]
+        orcomp=orcomp[datacut]
+
+        nmatchold=np.copy(nmatch)
+        nmatch=len(mA)
+
+    if nplus > nminus:
+        datacut=(orcomp==1)
+    else:
+        datacut=(orcomp==-1)
+
+    mA=mA[datacut]
+    mB=mB[datacut]
+    lmag=lmag[datacut]
+    orcomp=orcomp[datacut]
+    nmatch=len(mA)
+
+    n=np.max([nt1,nt2]) #max expected size
+    votearray=np.zeros([n,n],dtype=int)
+
+    for n1 in range(nmatch):
+        votearray[tA1[mA[n1]],tB1[mB[n1]]]=votearray[tA1[mA[n1]],tB1[mB[n1]]]+1
+        votearray[tA2[mA[n1]],tB2[mB[n1]]]=votearray[tA2[mA[n1]],tB2[mB[n1]]]+1
+        votearray[tA3[mA[n1]],tB3[mB[n1]]]=votearray[tA3[mA[n1]],tB3[mB[n1]]]+1
+
+    #print(votearray)
+    n2=votearray.shape[0]*votearray.shape[1]
+    votes=np.zeros([n2,3],dtype=int)
+
+    #cnt1=1
+    #cnt2=1
+    #for n1 in range(n2):
+    #    votes[n1,1]=np.copy(votearray.flatten('F')[n1])
+    #    votes[n1,2]=np.copy(cnt1)
+    #    votes[n1,3]=np.copy(cnt2)
+    #    cnt1=cnt1+1
+    #    if cnt1>n:
+    #        cnt1=1
+    #        cnt2=cnt2+1
+
+    i=-1
+    for i1 in range(n):
+        for i2 in range(n):
+            i=i+1
+            votes[i,0]=np.copy(votearray[i1,i2])
+            votes[i,1]=np.copy(i1)
+            votes[i,2]=np.copy(i2)
+
+    votes=votes[np.argsort(votes[:,0])]
+
+    #pre-allocated arrays
+    matches=np.zeros([n,2],dtype=int)
+    matchedx=np.zeros(n,dtype=int) #make sure stars are not assigned twice.
+    matchedy=np.zeros(n,dtype=int)
+
+    n1=np.copy(n2)-1
+    #print("votes",votes[0,0])  # <--- this gives the maximum vote!
+    maxvote=votes[n1,0]
+    #print("votes",maxvote)
+
+    if maxvote <= 1:
+        err=1
+        print('Matching Failed')
+
+    nm=-1
+    loop=1 #loop flag
+    while loop==1:
+        nm=nm+1 #count number of matches
+        #print(matchedx[votes[n1,1]],matchedy[votes[n1,2]])
+        if (matchedx[votes[n1,1]]>0) or (matchedy[votes[n1,2]]>0):
+            loop=0 #break from loop
+            nm=nm-1 #correct counter
+        else:
+            matches[nm,0]=np.copy(votes[n1,1])
+            matches[nm,1]=np.copy(votes[n1,2])
+            matchedx[votes[n1,1]]=1
+            matchedy[votes[n1,2]]=1
+        #when number of votes falls below half of max, then exit
+        if votes[n1-1,0]/maxvote < 0.5:
+            loop=0
+        if votes[n1-1,0]==0:
+            loop=0 #no more votes left, so exit.
+        n1=n1-1 # decrease counter
+        if n1==0:
+            loop=0 #break fron loop
+        if nm>=n1-1:
+            loop=0 #everything should of been matched by now
+
+    nm=nm+1
+    
+    return err, nm, matches
+
+def orient(ax,ay,bx,by,cx,cy):
+    
+    c=0 #if c stays as zero, then we missed a case!
+
+    avgx=(ax+bx+cx)/3
+    avgy=(ay+by+cy)/3
+
+    #discover quadrants for each point of triangle
+    if (ax-avgx>=0) and (ay-avgy >= 0): q1=1
+    if (ax-avgx>=0) and (ay-avgy < 0) : q1=2
+    if (ax-avgx<0)  and (ay-avgy < 0) : q1=3
+    if (ax-avgx<0)  and (ay-avgy >=0) : q1=4
+
+    if (bx-avgx>=0) and (by-avgy >= 0): q2=1
+    if (bx-avgx>=0) and (by-avgy < 0) : q2=2
+    if (bx-avgx<0)  and (by-avgy < 0) : q2=3
+    if (bx-avgx<0)  and (by-avgy >=0) : q2=4
+
+    if (cx-avgx>=0) and (cy-avgy >= 0): q3=1
+    if (cx-avgx>=0) and (cy-avgy < 0 ): q3=2
+    if (cx-avgx<0)  and (cy-avgy < 0 ): q3=3
+    if (cx-avgx<0)  and (cy-avgy >=0 ): q3=4
+
+    if (q1==1) and (q2==2):
+        c=+1
+    elif (q1==1) and (q2==4):
+        c=-1
+    elif (q1==2) and (q2==3):
+        c=+1
+    elif (q1==2) and (q2==1):
+        c=-1
+    elif (q1==3) and (q2==4):
+        c=+1
+    elif (q1==3) and (q2==2):
+        c=-1
+    elif (q1==4) and (q2==1):
+        c=+1
+    elif (q1==4) and (q2==3):
+        c=-1
+
+    if c==0:
+        if (q2==1) and (q3==2):
+            c=+1
+        elif (q2==1) and (q3==4):
+            c=-1
+        elif (q2==2) and (q3==3):
+            c=+1
+        elif (q2==2) and (q3==1):
+            c=-1
+        elif (q2==3) and (q3==4):
+            c=+1
+        elif (q2==3) and (q3==2):
+            c=-1
+        elif (q2==4) and (q3==1):
+            c=+1
+        elif (q2==4) and (q3==3):
+            c=-1
+
+    if (c==0):
+        if (q3==1) and (q1==2):
+            c=+1
+        elif (q3==1) and (q1==4):
+            c=-1
+        elif (q3==2) and (q1==3):
+            c=+1
+        elif (q3==2) and (q1==1):
+            c=-1
+        elif (q3==3) and (q1==4):
+            c=+1
+        elif (q3==3) and (q1==2):
+            c=-1
+        elif (q3==4) and (q1==1):
+            c=+1
+        elif (q3==4) and (q1==3):
+            c=-1
+
+    if (c==0) and (q1==q2):
+        dydx1=(ay-cy)/(ax-cx)
+        dydx2=(by-cy)/(bx-cx)
+        if q1==1:
+            if dydx2>=dydx1:
+                c=-1
+            else:
+                c=+1
+        elif q1==2:
+            if dydx2>=dydx1:
+                c=-1
+            else:
+                c=+1
+        elif q1==3:
+            if dydx2>=dydx1:
+                c=-1
+            else:
+                c=+1
+        elif q1==4:
+            if dydx2>=dydx1:
+                c=-1
+            else:
+                c=+1
+
+    if (c==0) and (q2==q3):
+        dydx1=(by-ay)/(bx-ax)
+        dydx2=(cy-ay)/(cx-ax)
+        if q2==1:
+            if dydx2>=dydx1:
+                c=-1
+            else:
+                c=+1
+        elif q2==2:
+            if dydx2>=dydx1:
+                c=-1
+            else:
+                c=+1
+        elif q2==3:
+            if dydx2>=dydx1:
+                c=-1
+            else:
+                c=+1
+        elif q2==4:
+            if dydx2>=dydx1:
+                c=-1
+            else:
+                c=+1
+
+    if (c==0) and (q1==q3):
+        dydx1=(ay-by)/(ax-bx)
+        dydx2=(cy-by)/(cx-bx)
+        if q3==1:
+            if dydx1>=dydx2:
+                c=-1
+            else:
+                c=+1
+        elif q3==2:
+            if dydx1>=dydx2:
+                c=-1
+            else:
+                c=+1
+        elif q3==3:
+            if dydx1>=dydx2:
+                c=-1
+            else:
+                c=+1
+        elif q3==4:
+            if dydx1>=dydx2:
+                c=-1
+            else:
+                c=+1
+
+    return c;
+
+
 def lightprocess(filename,date,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,photap,bpix):
     
     info=0
