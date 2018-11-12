@@ -2,16 +2,59 @@ from astropy.io import fits #astropy modules for FITS IO
 import numpy as np
 import scipy.optimize as opt # For least-squares fits
 from scipy.fftpack import fft, fft2
+import scipy.spatial as spatial
 import medfit  #Fortran backend for median fits
 from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder
 from photutils import CircularAperture
 from photutils import aperture_photometry
+import os.path
 import sys
 import math
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm #for better display of FITS images
+
+def match_points(current_points, prior_points, distance_cutoff):
+    """
+    Takes in an nxd input vector of d-dimensional Euclidean coordinates representing the current dataset
+    and an mxd input vector of d-dimensional Euclidean cooridnates representing the prior dataset.
+    Output gives, for each row in _current_points, an mx2 vector that gives
+      - the index number from _prior_points in the first column,
+      - and distance matched in second.
+    If the matched distance is greater than the cutoff, consider the pair unmatched.
+    Unmatched points get -1 for the "matched" index number and the cutoff value for the distance (infinity).
+    """
+
+    # Initialize matched indices to -1 and distances to the cutoff value.
+    matches = np.ones((current_points.shape[0], 2))*-1
+    matches[:,1] = distance_cutoff
+
+    # Initialize index numbers for current points
+    current_idx = np.asarray(range(current_points.shape[0]))
+    prior_idx = np.asarray(range(prior_points.shape[0]))
+
+    # Generate kd trees
+    curr_kd_tree = spatial.KDTree(current_points)
+    prior_kd_tree = spatial.KDTree(prior_points)
+
+    # Compute closest keypoint from current->prior and from prior->current
+    matches_a = prior_kd_tree.query(current_points)
+    matches_b = curr_kd_tree.query(prior_points)
+
+    # Mutual matches are the positive matches within the distance cutoff. All others unmatched.
+    potential_matches = matches_b[1][matches_a[1]]
+    matched_indices = np.equal(potential_matches, current_idx)
+
+    # Filter out matches that are more than the distance cutoff away.
+    in_bounds = (matches_a[0] <= distance_cutoff)
+    matched_indices = np.multiply(matched_indices, in_bounds)
+
+    # Add the matching data to the output
+    matches[current_idx[matched_indices],0] = prior_idx[matches_a[1]][matched_indices].astype(np.int)
+    matches[current_idx[matched_indices],1] = matches_a[0][matched_indices]
+
+    return matches
 
 def calctransprocess(x1,y1,f1,x2,y2,f2,n2m=10):
 
@@ -21,9 +64,9 @@ def calctransprocess(x1,y1,f1,x2,y2,f2,n2m=10):
     sortidx=np.argsort(f2)
     maxf2=f2[sortidx[np.max([len(f2)-n2m,0])]]
 
-    err, nm, matches = neo.match(x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+    err, nm, matches = match(x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
     if nm >= 3:
-        offset, rot = neo.findtrans(nm,matches,x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+        offset, rot = findtrans(nm,matches,x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
     else:
         offset = np.array([0, 0])
         rot = np.array([[0,0],[0,0]])
@@ -531,11 +574,38 @@ def lightprocess(filename,date,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,p
         
     scidata_cord,phot_table,mean,median,std=\
       clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,photap,bpix)
+
+    mean, median, std = sigma_clipped_stats(scidata_cord, sigma=3.0, iters=5)
+
+    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
+    sources = daofind(scidata_cord - median)
+
+    positions = (sources['xcentroid'], sources['ycentroid'])
+    apertures = CircularAperture(positions, r=photap)
+    phot_table = aperture_photometry(scidata_cord-median, apertures)
          
-    #photall.append(phot_table)
-    #photstat.append([mean,median,std])
+    photall.append(phot_table)
+    photstat.append([mean,median,std])
     
     return [phot_table,date,mean,median,std,scidata_cord]
+
+def lightprocess_save(filename,savedir,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,bpix):
+
+    info=0
+
+    scidata_cord=\
+      clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,bpix)
+
+    #Set up new file name for cleaned image
+    base=os.path.basename(filename)
+    x=os.path.splitext(base)
+    newfile= savedir+x[0]+"_cord.fits"
+
+    #Write the file
+    header=fits.getheader(filename)
+    fits.writeto(newfile,scidata_cord,header,overwrite=True)
+
+    return info;
 
 def darkprocess(workdir,darkfile,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,bpix):
     info=0
@@ -568,7 +638,7 @@ def darkprocess(workdir,darkfile,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,bpix):
     
     return scidata_cor
 
-def clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,photap,bpix):
+def clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,bpix):
     
     scidata=read_fitsdata(filename)
 
@@ -632,16 +702,7 @@ def clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info
 
     scidata_cord=scidata_cor-(a+b*darkavg)
 
-    mean, median, std = sigma_clipped_stats(scidata_cord, sigma=3.0, iters=5)
-
-    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
-    sources = daofind(scidata_cord - median)
-
-    positions = (sources['xcentroid'], sources['ycentroid'])
-    apertures = CircularAperture(positions, r=photap)
-    phot_table = aperture_photometry(scidata_cord-median, apertures)
-
-    return scidata_cord,phot_table,mean,median,std;
+    return scidata_cord;
 
 
 def read_fitsdata(filename):
