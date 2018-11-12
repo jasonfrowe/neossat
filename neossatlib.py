@@ -13,6 +13,22 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm #for better display of FITS images
 
+def calctransprocess(x1,y1,f1,x2,y2,f2,n2m=10):
+
+    sortidx=np.argsort(f1)
+    maxf1=f1[sortidx[np.max([len(f1)-n2m,0])]]
+
+    sortidx=np.argsort(f2)
+    maxf2=f2[sortidx[np.max([len(f2)-n2m,0])]]
+
+    err, nm, matches = neo.match(x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+    if nm >= 3:
+        offset, rot = neo.findtrans(nm,matches,x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+    else:
+        offset = np.array([0, 0])
+        rot = np.array([[0,0],[0,0]])
+    return offset, rot;
+
 def findtrans(nm,matches,x1,y1,x2,y2):
 
     #pre-allocate arrays
@@ -247,7 +263,7 @@ def match(x1,y1,x2,y2,eps=0.001):
 
     #print(nmatch,mA[nmatch],mB[nmatch])
     nmatchold=0;
-
+    nplus=0;nminus=0
     while (nmatch != nmatchold):
         nplus=np.sum(orcomp==1)
         nminus=np.sum(orcomp==-1)
@@ -519,7 +535,7 @@ def lightprocess(filename,date,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,p
     #photall.append(phot_table)
     #photstat.append([mean,median,std])
     
-    return [phot_table,date,mean,median,std]
+    return [phot_table,date,mean,median,std,scidata_cord]
 
 def darkprocess(workdir,darkfile,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,bpix):
     info=0
@@ -1085,8 +1101,8 @@ def photo_centroid(scidata,bpix,starlist,ndp,dcoocon,itermax):
             fsum=0.0
             for j in range(j1,j2):
                 for k in range(k1,k2):
-                    sumx=sumx+scidata[j,k]*j
-                    sumy=sumy+scidata[j,k]*k
+                    sumx=sumx+scidata[j,k]*(j+1)
+                    sumy=sumy+scidata[j,k]*(k+1)
                     fsum=fsum+scidata[j,k]
                 
             xcoo=sumx/fsum
@@ -1098,6 +1114,8 @@ def photo_centroid(scidata,bpix,starlist,ndp,dcoocon,itermax):
             
             xcoo1=np.copy(xcoo) #make a copy of current position to evaluate change.
             ycoo1=np.copy(ycoo)
+            
+            iter=iter+1
         
             #print(dxcoo,dycoo,dcoo)
         
