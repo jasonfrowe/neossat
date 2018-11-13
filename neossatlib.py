@@ -1068,16 +1068,23 @@ def darkcorrect(scidata,masterdark,bpix):
     return model_m,model_c
 
 def imagestat(scidata,bpix):
-    imstat=[]
-    masked_scidata = np.ma.array(scidata, mask=scidata<bpix)
-    imstat.append(np.min(masked_scidata))  #min of array
-    imstat.append(np.max(masked_scidata))  #max of array
-    imstat.append(np.mean(masked_scidata)) #mean of array
-    imstat.append(np.std(masked_scidata))  #standard deviation
-    imstat.append(np.ma.median(masked_scidata)) #median
 
-    imstat=np.array(imstat) #convert to numpy array
-    
+    it=5 #number of iterations to chop out outliers
+    imstat=[]
+
+    minp=np.min(scidata[scidata>bpix])
+    maxp=np.max(scidata[scidata>bpix])
+    mean=np.mean(scidata[scidata>bpix])
+    std=np.std(scidata[scidata>bpix])
+    median=np.median(scidata[scidata>bpix])
+
+    for i in range(it):
+        mean=np.mean(scidata[((scidata>bpix) & (np.abs(scidata-median)<3.0*std))])
+        std=np.std(scidata[(scidata>bpix) & (np.abs(scidata-median)<3.0*std)])
+        median=np.median(scidata[(scidata>bpix) & (np.abs(scidata-median)<3.0*std)])
+
+    imstat=np.array([minp,maxp,mean,std,median])
+
     return imstat;
 
 def plot_histogram(scidata,imstat,sigscalel,sigscaleh):
