@@ -572,8 +572,8 @@ def lightprocess(filename,date,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,p
     
     info=0
         
-    scidata_cord,phot_table,mean,median,std=\
-      clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,photap,bpix)
+    scidata_cord=\
+      clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,bpix)
 
     mean, median, std = sigma_clipped_stats(scidata_cord, sigma=3.0, iters=5)
 
@@ -584,8 +584,8 @@ def lightprocess(filename,date,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,p
     apertures = CircularAperture(positions, r=photap)
     phot_table = aperture_photometry(scidata_cord-median, apertures)
          
-    photall.append(phot_table)
-    photstat.append([mean,median,std])
+    #photall.append(phot_table)
+    #photstat.append([mean,median,std])
     
     return [phot_table,date,mean,median,std,scidata_cord]
 
