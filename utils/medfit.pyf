@@ -1,0 +1,35 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module medfit ! in 
+    interface  ! in :medfit
+        subroutine medfit(x,y,ndata,a,b,abdev) ! in :medfit:medfit.f
+            real*8 dimension(ndata),depend(ndata), intent(in) :: x
+            real*8 dimension(ndata),depend(ndata), intent(in) :: y
+            integer intent(in) :: ndata
+            real*8 intent(out) :: a
+            real*8 intent(out) :: b
+            real*8  :: abdev
+        end subroutine medfit
+        function rofunc(b) ! in :medfit:medfit.f
+            real*8 :: b
+            real*8 dimension(5045328) :: x
+            real*8 dimension(5045328) :: y
+            real*8 dimension(5045328) :: arr
+            real*8 :: aa
+            real*8 :: abdev
+            integer :: ndata
+            real*8 :: rofunc
+            common /arrays/ x,y,arr,aa,abdev,ndata
+        end function rofunc
+        function select(k,n,arr) ! in :medfit:medfit.f
+            integer :: k
+            integer, optional,check(len(arr)>=n),depend(arr) :: n=len(arr)
+            real*8 dimension(n) :: arr
+            real*8 :: select
+        end function select
+    end interface 
+end python module medfit
+
+! This file was auto-generated with f2py (version:2)i
+! See http://cens.ioc.ee/projects/f2py2e://user.oc-static.com/files/151001_152000/151018.png /
