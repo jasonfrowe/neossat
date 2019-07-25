@@ -14,6 +14,285 @@ import math
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm #for better display of FITS images
+#for PCA analysis
+import scipy.linalg.lapack as la
+
+def pca_photcor(phot1,pcavec,npca,icut3=-1):
+
+    npt=len(phot1)
+    if icut3==-1:
+        icut3=np.zeros(npt)
+
+    icut=cutoutliers(phot1)
+    icut2=sigclip(phot1,icut)
+    icut=icut+icut2+icut3
+    phot1=replaceoutlier(phot1,icut)
+
+    median=np.median(phot1[icut==0])
+    #normalize flux
+    phot1=phot1/median
+
+    pars=[]
+    pars.append(np.median(phot1))
+    for i in range(npca):
+        pars.append(0)
+    pars=np.array(pars)
+    #pars=np.array([np.median(phot1),0.0,0.0])
+
+    #get PCA model
+    for i in range(3):
+        ans=opt.least_squares(pca_func,pars,args=[phot1,pcavec,icut])
+        print(ans.x)
+        corflux=phot1-pca_model(ans.x,pcavec)+1.0
+        icut2=cutoutliers(corflux)
+        icut=icut+icut2
+
+    return corflux, median, ans, icut
+
+def get_pcavec(photometry_jd,photometry,exptime,minflux=0,id_exclude=[-1]):
+
+    nspl=len(photometry_jd) #number of samples (time stamps)
+    npca=len(photometry[0]) #number of light curves
+    xpca=np.zeros([nspl,npca]) #work array for PCA
+    xpcac=np.zeros([nspl,npca]) #work array for PCA
+    m=np.zeros(npca)     #stores means
+    medianf=np.zeros(npca) #stores medians
+    badlist=[] #indices of photometry with NaNs
+
+    ii=0
+    for j in range(npca):
+        xpca[:,j]=[photometry[i][j]['aperture_sum']/exptime[i] for i in range(nspl)] #construct array
+
+        if math.isnan(np.sum(xpca[:,j]))==False and all([j!=x for x in id_exclude]):  #Require valid data, purposely exclude AUMic
+            #deal with outliers
+            darray=np.array(xpca[:,j])
+            icut=cutoutliers(darray)
+            icut2=sigclip(darray,icut)
+            icut=icut+icut2
+            xpca[:,j]=replaceoutlier(darray,icut)
+
+            medianf[j]=np.median(xpca[:,j]) #median raw flux from star
+
+            xpca[:,j]=xpca[:,j]/medianf[j] #divide by median
+
+            m[j]=np.median(xpca[:,j]) #calculate median-centered data set
+
+            #print(j,medianf[j],m[j])
+
+            xpcac[:,j]=xpca[:,j]-m[j] #remove mean
+            if medianf[j] > minflux:
+                ii=ii+1
+        else:
+            badlist.append(j)
+
+    xpcac_c=np.zeros([nspl,ii])
+    jj=-1
+    for j in range(npca):
+        if medianf[j] > minflux:
+            jj=jj+1
+            xpcac_c[:,jj]=xpcac[:,j]
+
+    print(nspl,ii)
+
+    #calculate co-variance matrix
+    C=np.zeros([ii,ii])
+    for i in range(ii):
+        for j in range(ii):
+            var=np.sum(xpcac_c[:,i]*xpcac_c[:,j])/nspl
+            C[i,j]=var
+
+    ans=la.dgeev(C)
+    vr=ans[3]
+    pcavec=np.matmul(xpcac_c,vr)
+    print("nbad", len(badlist))
+    print("bad/exclude list:", badlist)
+
+    return pcavec;
+
+def get_master_phot4all(workdir,lightlist,jddate,transall,master_phot_table,photap,\
+        bpix):
+    
+    #create arrays to store photometry 
+    photometry=[]
+    photometry_jd=[]
+    
+    #loop over all images.  
+    for n2 in range(len(lightlist)):
+
+        #Get transformation matrix 
+        mat=np.array([[transall[n2][1][0][0], transall[n2][1][0][1]],\
+            [transall[n2][1][1][0], transall[n2][1][1][1]]])
+
+        if (np.abs(1.0-mat[0][0]) < 0.05) and (np.abs(1.0-mat[1][1]) < 0.05): #keep only sane transforms
+
+            scidata=read_fitsdata(workdir+lightlist[n2])
+            mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, iters=5)
+
+            #Get centroids
+            x2 = np.array(master_phot_table['xcenter'][:])
+            y2 = np.array(master_phot_table['ycenter'][:])
+            #Invert transformation matix 
+            invmat=np.linalg.inv(mat)
+            ##get copy of original sources
+            #sources_new=np.copy(sources)
+            #apply transformation 
+            xnew = -transall[n2][0][0] + invmat[0][0]*x2 + invmat[0][1]*y2
+            ynew = -transall[n2][0][1] + invmat[1][0]*x2 + invmat[1][1]*y2
+
+            positions_new = (xnew, ynew)
+            apertures_new = CircularAperture(positions_new, r=photap)
+            phot_table_new = aperture_photometry(scidata-median, apertures_new)
+
+            photometry_jd.append(jddate[n2])
+            photometry.append(phot_table_new)
+
+    photometry_jd=np.array(photometry_jd)    
+    
+    return photometry, photometry_jd;
+
+
+def bindata(time,data,tbin):
+    bin_time=[]
+    bin_flux=[]
+    npt=len(time)
+    tmin=np.min(time)
+    tmax=np.max(time)
+    bin=[int((t-tmin)/tbin) for t in time]
+    bin=np.array(bin)
+    for b in range(np.max(bin)+1):
+        npt=len(bin[bin==b])
+        if npt>1:
+            #print(npt)
+            bint1=np.median(time[bin==b])
+            binf1=np.median(data[bin==b])
+            bin_time.append(bint1)
+            bin_flux.append(binf1)
+    bin_time=np.array(bin_time)
+    bin_flux=np.array(bin_flux)
+
+    return bin_time,bin_flux;
+
+def pca_model(pars,pca):
+    "Our Model"
+
+    m=pars[0]
+    for i in range(len(pars)-1):
+        #print(i,pca[:,i+1])
+        m=m+pars[i+1]*pca[:,i]
+
+    #print(m)
+    return m;
+
+def pca_func(pars,phot,pca,icut):
+    "Residuals"
+
+    m=pca_model(pars,pca)
+    npt=len(phot)
+    diff=[]
+    for i in range(npt):
+        if icut[i]==0:
+            diff.append(phot[i]-m[i])
+        else:
+            diff.append(0)
+
+    return diff;
+
+def replaceoutlier(flux,icut):
+
+    gmedian=np.median(flux[icut==0])
+
+    nsampmax=25 #local sample size
+    npt=len(flux)
+
+    for i in range(npt):
+        if icut[i]!=0:
+            i1=np.max([0,i-nsampmax])
+            i2=np.min([npt-1,i+nsampmax])
+            samps=flux[i1:i2]
+            if len(samps[icut[i1:i2]==0])>1:
+                median=np.median(samps[icut[i1:i2]==0])
+                #print(i,i1,i2,median)
+                if math.isnan(median):
+                    flux[i]=gmedian
+                else:
+                    flux[i]=median
+            else:
+                flux[i]=gmedian
+    return flux
+
+def sigclip(flux,icut):
+    #Global Sigma clipping
+    npt=len(flux)
+    icut2=np.zeros(npt,dtype='int')
+
+    stdcut=3.0
+    niter=3
+    for i in range(niter):
+        mean=np.mean(flux[(icut2==0) & (icut==0)])
+        std=np.std(flux[(icut2==0) & (icut==0)])
+        #print(mean,std)
+        for j in range(npt):
+            if np.abs(flux[j]-mean)>stdcut*std:
+                icut2[j]=1
+        #print(np.sum(icut2))
+    return icut2
+
+def cutoutliers(flux):
+    npt=len(flux)
+    icut=np.zeros(npt,dtype='int')
+
+    nsampmax=25 #Number of nearby samples for stats
+    sigma=3.0   #threshold for removing outliers
+
+    for i in range(npt):
+        if math.isnan(flux[i]):
+            icut[i]=1
+
+    #print(npt)
+    for i in range(1,npt-1):
+
+        i1=np.max([0,i-nsampmax])
+        i2=np.min([npt-1,i+nsampmax])
+        samps=flux[i1:i2]
+        dd_median=meddiff(samps[icut[i1:i2]==0])
+        threshold=dd_median*sigma
+
+        vp=flux[i]-flux[i+1]
+        vm=flux[i]-flux[i-1]
+
+        if (np.abs(vp) > threshold) and (np.abs(vm) > threshold) and (vp/vm > 0):
+            icut[i]=1 #cut data point
+
+        #print(i,i1,i2,dd_median,icut[i])
+        #input()
+
+    return icut
+
+def meddiff(x):
+    npt=len(x)
+    dd=np.zeros(npt-1)
+    for i in range(npt-1):
+        dd[i]=np.abs(x[i]-x[i-1])
+
+    dd_median=np.median(dd)
+
+    return dd_median
+
+def calctransprocess(x1,y1,f1,x2,y2,f2,n2m=10):
+
+    sortidx=np.argsort(f1)
+    maxf1=f1[sortidx[np.max([len(f1)-n2m,0])]]
+
+    sortidx=np.argsort(f2)
+    maxf2=f2[sortidx[np.max([len(f2)-n2m,0])]]
+
+    err, nm, matches = neo.match(x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+    if nm >= 3:
+        offset, rot = neo.findtrans(nm,matches,x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+    else:
+        offset = np.array([0, 0])
+        rot = np.array([[0,0],[0,0]])
+    return offset, rot;
 
 def match_points(current_points, prior_points, distance_cutoff):
     """
@@ -118,6 +397,14 @@ def match(x1,y1,x2,y2,eps=0.001):
 
     nx1=len(x1) #number of stars in frame #1
     nx2=len(x2) #number of stars in frame #2
+    if nx2 < 4:
+        print('Matching Failed')
+        err=-1.0
+        return err, nm, matches
+    if nx1 < 4:
+        print('Matching Failed')
+        err=-1.0
+        return err, nm, matches
 
     # number of expected triangles = n!/[(n-3)! * 3!] (see Pascals Triangle)
     ntri1=int(np.math.factorial(nx1)/(np.math.factorial(nx1-3)*6))
@@ -852,8 +1139,11 @@ def fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=0):
     #xf = np.linspace(0.0, 1.0/(2.0), T*xn//2)
     xf = np.append(np.linspace(0.0, 1.0/2.0, T*xn//2),-np.linspace(1.0/2.0, 0.0, T*xn//2))
     yf = np.linspace(0.0, 1.0/2.0, T*yn//2)
-    
-    loop=0
+   
+    if fmax>0:
+        loop=0
+    else:
+        loop=1
 
     while loop==0:
         
@@ -956,8 +1246,8 @@ def overscan_cor(scidata_c,overscan,a,bpix):
     xn=overscan.shape[0]
     yn=overscan.shape[1]
     model=fourierd2d(a,xn,yn,0.0,0.0)
-    overscan_cor=overscan-model
-    row_cor=[np.sum(overscan_cor[i,:])/yn for i in range(xn)]
+    overscan_cor1=overscan-model
+    row_cor=[np.sum(overscan_cor1[i,:])/yn for i in range(xn)]
     scidata_cor=np.copy(scidata_co)
     for i in range(xn):
         scidata_cor[i,:]=scidata_co[i,:]-row_cor[i]
