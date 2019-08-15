@@ -5,15 +5,23 @@ Source Code for CSA's NEOSSat Mission (Jason.Rowe@ubishops.ca)
 --Update--
 To combine the medfit library:
 f2py3 -c utils/medfit.pyf utils/medfit.f90
+(the FORTRAN dependency will likely be removed soon, stay tuned!) 
 
 
 NEOSSat is a 15-cm optical space telescope capable of obtaining uninterupted time-series imaging of relatively bright stars.  The codes provided here enable corrections of instrumental effects, primarly dark current and tools for rudimentary extraction of aperature photometry.  
 
-There are two versions of the code. A pure Fortran version and a pure Python version.  The Fortran version is stable and optimized.  However, there is a large segment of the community that would prefer an easily portable Python code.  The Python version is not well optimized as it is a translation of the Fortran algorithms, thus many loops need to be 'Pythonized' to significantly reduce overhead.  Run times for the Python code to correct and extract photometry for a single 1Kx1K frame is approximately 2 minutes on a low-power (laptop) i5 CPU.  The Fortran code completes in a few seconds.  The Python version will be further developed to increase speed, but also serves as a well documented procedure to follow when working with NEOSSat imaging.
+To help with data reduction and photometric extraction two worksheets are provided:
 
-If you are using Python, I recommend starting with the NEOSSat_template Jupyter/iPython worksheet which depends on neossatlib.py.  If you wish to use the Fortran version, you need to edit the Makefile to match your computer configuration.  The Fortran code requires PGPlot libraries for graphics.  The phot.py Python script demonstrates how to use the Fortran binaries to extract time-series photometry.
+1. "Cleaning NEOSSat Photometry"
+2. "Photometry Extraction Template"
 
-Feel free send along comments, post bug or provide revisions.
+The first template shows how to remove instrumental effects from the raw images.  This includes bias, electronic interference and dark current.  
+
+The second template walks though a simple method to extract photometry from all sources using the Python "photutils" package.  The extraction procedure is very similar to DAOPhot/Allframe cookbooks.  An initial extraction of stars flux and position is computed, then the frames are registered and stack to produce a deep image.  The deep image is used to construct the master star list, which is then used to extract photometry from individual frames.  A simple PCA routine is then supplied to remove common instrumental trends from the raw photometry.  
+
+Please feel free to download and modify the codes and worksheets as you see fit.  If you find these routines useful please provide a citation in any publications. 
+
+If you have any questions or concerns, please do not hestiate to reach out!  Code edits, updates and bug reports are always welcome.  
 
 Regards,
 Jason Rowe

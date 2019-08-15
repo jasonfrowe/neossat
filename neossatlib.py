@@ -154,23 +154,32 @@ def get_master_phot4all(workdir,lightlist,jddate,transall,master_phot_table,phot
 def bindata(time,data,tbin):
     bin_time=[]
     bin_flux=[]
+    bin_ferr=[]
     npt=len(time)
     tmin=np.min(time)
     tmax=np.max(time)
     bin=[int((t-tmin)/tbin) for t in time]
     bin=np.array(bin)
+    #nc=0
     for b in range(np.max(bin)+1):
         npt=len(bin[bin==b])
-        if npt>1:
+        #nc=nc+npt
+        if npt>3:
             #print(npt)
             bint1=np.median(time[bin==b])
             binf1=np.median(data[bin==b])
+            binfe=np.std(data[bin==b])/np.sqrt(npt)
             bin_time.append(bint1)
             bin_flux.append(binf1)
+            bin_ferr.append(binfe)
     bin_time=np.array(bin_time)
     bin_flux=np.array(bin_flux)
+    bin_ferr=np.array(bin_ferr)
 
-    return bin_time,bin_flux;
+
+    #print(nc)
+
+    return bin_time,bin_flux,bin_ferr;
 
 def pca_model(pars,pca):
     "Our Model"
@@ -925,6 +934,35 @@ def darkprocess(workdir,darkfile,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,bpix):
     
     return scidata_cor
 
+def seg_func(x0,data):
+    
+    b1=x0[0]
+    m1=x0[1]
+    m2=x0[2]
+    tp=x0[3]
+    #print(x0)
+    
+    b2=m1*tp+b1-m2*tp
+    
+    ans=[]
+    for x in data.flatten():
+        if x<tp:
+            y=m1*x+b1
+        else:
+            y=m2*x+b2
+        ans.append(y)
+    
+    ans=np.array(ans)
+    return ans;
+
+def ls_seg_func(x0,data1,data2,derr):
+
+    ans=seg_func(x0,data1)
+
+    diff=(data2-ans)/(derr+1.0e-20)
+
+    return diff
+
 def clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,bpix):
     
     scidata=read_fitsdata(filename)
@@ -965,29 +1003,44 @@ def clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info
     scidata_cor=overscan_cor(scidata_c,overscan,a,bpix)
 
     #Apply Dark correction
+    #image1=darkavg
+    #mind=darkavg.min()
+    #maxd=darkavg.max()
+    #image2=scidata_cor
+    #data1=image1.flatten()
+    #data2=image2.flatten()
+    #data1t=data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
+    #data2t=data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
+    #data1=np.copy(data1t)
+    #data2=np.copy(data2t)
+    #ndata=len(data1)
+    #abdev=1.0
+    #if ndata > 3:
+    #    a,b = medfit.medfit(data1,data2,ndata,abdev)
+    #else:
+    #    a=0.0
+    #    b=1.0
+    #scidata_cord=scidata_cor-(a+b*darkavg)
+
     image1=darkavg
-    mind=darkavg.min()
-    maxd=darkavg.max()
-
     image2=scidata_cor
-
     data1=image1.flatten()
     data2=image2.flatten()
 
-    data1t=data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
-    data2t=data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
-    data1=np.copy(data1t)
-    data2=np.copy(data2t)
-
-    ndata=len(data1)
-    abdev=1.0
-    if ndata > 3:
-        a,b = medfit.medfit(data1,data2,ndata,abdev)
-    else:
-        a=0.0
-        b=1.0
-
-    scidata_cord=scidata_cor-(a+b*darkavg)
+    mind=0
+    maxd=8000
+    data1_bin,data2_bin,derr_bin=bindata(\
+                            data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],\
+                            data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],50)
+    b1=100
+    m1=0.3
+    m2=1.3
+    tp=2000
+    x0=[b1,m1,m2,tp]
+    ans=opt.least_squares(ls_seg_func,x0,args=[data1_bin,data2_bin,derr_bin])
+    newdark=seg_func(ans.x,darkavg)
+    newdark=newdark.reshape([darkavg.shape[0],darkavg.shape[1]])
+    scidata_cord=scidata_cor-newdark
 
     return scidata_cord;
 
@@ -1218,7 +1271,10 @@ def funcphase(aoff,a,xn,yn,scidata_in):
     yoff=aoff[1]
     model=fourierd2d(a,xn,yn,xoff,yoff)
     sqmeanabs=np.sqrt(np.mean(np.abs(scidata_in)))
-    diff = (scidata_in-model)/sqmeanabs
+    if sqmeanabs>0:
+        diff = (scidata_in-model)/sqmeanabs
+    else:
+        diff = (scidata_in-model)
     diffflat=diff.flatten()
     return diffflat;
 
