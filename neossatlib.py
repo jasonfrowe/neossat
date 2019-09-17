@@ -915,10 +915,10 @@ def lightprocess_save(filename,savedir,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,
     #header=fits.getheader(filename)
     #fits.writeto(newfile,scidata_cord,header,overwrite=True)
     header=fits.getheader(filename) #Make copy of original header to insert
-    header['BZERO']=0.0  #make sure BZERO and BSCALE are set
+    header['BZERO']=0  #make sure BZERO and BSCALE are set
     header['BSCALE']=1.0
     hdu = fits.PrimaryHDU(scidata_cord)
-    hdu.scale('int16', bzero=0, bscale=1) #Scaling to 16-bit integers
+    hdu.scale('int32') #Scaling to 32-bit integers
     i=0
     for h in header:
         if h!='SIMPLE' and h!='BITPIX' and h!='NAXIS' and h!='NAXIS1' and h!='NAXIS2' and h!='EXTEND':
