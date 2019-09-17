@@ -17,6 +17,20 @@ from matplotlib.colors import LogNorm #for better display of FITS images
 #for PCA analysis
 import scipy.linalg.lapack as la
 
+def photprocess(filename,date,photap,bpix):
+    
+    scidata=read_fitsdata(filename)
+    
+    mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, iters=5)
+    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
+    sources = daofind(scidata - median)
+    
+    positions = (sources['xcentroid'], sources['ycentroid'])
+    apertures = CircularAperture(positions, r=photap)
+    phot_table = aperture_photometry(scidata-median, apertures)
+    
+    return [phot_table,date,mean,median,std,filename]
+
 def pca_photcor(phot1,pcavec,npca,icut3=-1):
 
     npt=len(phot1)
@@ -898,8 +912,21 @@ def lightprocess_save(filename,savedir,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,
     newfile= savedir+x[0]+"_cord.fits"
 
     #Write the file
-    header=fits.getheader(filename)
-    fits.writeto(newfile,scidata_cord,header,overwrite=True)
+    #header=fits.getheader(filename)
+    #fits.writeto(newfile,scidata_cord,header,overwrite=True)
+    header=fits.getheader(filename) #Make copy of original header to insert
+    header['BZERO']=0.0  #make sure BZERO and BSCALE are set
+    header['BSCALE']=1.0
+    hdu = fits.PrimaryHDU(scidata_cord)
+    hdu.scale('int16', bzero=0, bscale=1) #Scaling to 16-bit integers
+    i=0
+    for h in header:
+        if h!='SIMPLE' and h!='BITPIX' and h!='NAXIS' and h!='NAXIS1' and h!='NAXIS2' and h!='EXTEND':
+            #print(h,header[i])
+            hdu.header.append((h,header[i]))
+        i=i+1
+    hdu.writeto(newfile,overwrite=True) 
+
 
     return info;
 
