@@ -992,82 +992,126 @@ def ls_seg_func(x0,data1,data2,derr):
 
 def clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,bpix):
     
+    cor = 0  #Updates from Hamza
+    dark = 0
     scidata=read_fitsdata(filename)
+    scidata_cor = None
+    scidata_cord = None
 
-    #Crop Science Image
-    sh=scidata.shape
-    strim=np.array([sh[0]-xsc,sh[0],sh[1]-ysc,sh[1]])
-    scidata_c=np.copy(scidata[strim[0]:strim[1],strim[2]:strim[3]])
+    #Updates from Hamza.  
+    #This part examines if overscan+cropping is needed and check if dark is valid 
+    hdul = fits.open(filename, mode="update")
+    hdr = hdul[0].header
+    NAXIS1 = hdr['NAXIS1']
+    NAXIS2 = hdr['NAXIS2']
+    hdul.close()
+    # set flags of what needs to be performed 
+    if not NAXIS1 == xsc or not NAXIS2 == ysc:
+        cor = 1
+    if len(darkavg) != 0:                   
+        dark = 1
 
-    #Crop Overscan
-    sh=scidata.shape
+    # If we only need to perform dark correction then set the scidata_cor to scidata
+    if cor == 0 and dark == 1:
+        scidata_cor = scidata
+    
+    if cor == 1:
 
-    otrim=np.array([sh[0]-xov,sh[0],0,yov])
-    overscan=np.copy(scidata[otrim[0]:otrim[1],otrim[2]:otrim[3]])
-    mean=0.0
-    for i in range(yov):
-        med=np.median(overscan[:,i])
-        overscan[:,i]=overscan[:,i]-med
-        mean=mean+med
-    mean=mean/yov
-    overscan=overscan+mean  #Add mean back to overscan (this is the BIAS)
+        #Crop Science Image
+        sh=scidata.shape
+        strim=np.array([sh[0]-xsc,sh[0],sh[1]-ysc,sh[1]])
+        scidata_c=np.copy(scidata[strim[0]:strim[1],strim[2]:strim[3]])
 
-    if info >= 2:
-        imstat=imagestat(overscan,bpix)
-        plot_image(np.transpose(overscan),imstat,0.3,3.0)
+        #Crop Overscan
+        sh=scidata.shape
 
-    #Fourier Decomp of overscan
-    a=fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=info)
+        otrim=np.array([sh[0]-xov,sh[0],0,yov])
+        overscan=np.copy(scidata[otrim[0]:otrim[1],otrim[2]:otrim[3]])
+        mean=0.0
+        for i in range(yov):
+            med=np.median(overscan[:,i])
+            overscan[:,i]=overscan[:,i]-med
+            mean=mean+med
+        mean=mean/yov
+        overscan=overscan+mean  #Add mean back to overscan (this is the BIAS)
 
-    if info >= 2:
-        xn=overscan.shape[0]
-        yn=overscan.shape[1]
-        model=fourierd2d(a,xn,yn,xoff,yoff)
-        imstat=imagestat(overscan-model,bpix)
-        plot_image(np.transpose(overscan-model),imstat,0.3,3.0)
+        if info >= 2:
+            imstat=imagestat(overscan,bpix)
+            plot_image(np.transpose(overscan),imstat,0.3,3.0)
 
-    #Apply overscan correction to science raster
-    scidata_cor=overscan_cor(scidata_c,overscan,a,bpix)
+        #Fourier Decomp of overscan
+        a=fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=info)
 
-    #Apply Dark correction
-    #image1=darkavg
-    #mind=darkavg.min()
-    #maxd=darkavg.max()
-    #image2=scidata_cor
-    #data1=image1.flatten()
-    #data2=image2.flatten()
-    #data1t=data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
-    #data2t=data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
-    #data1=np.copy(data1t)
-    #data2=np.copy(data2t)
-    #ndata=len(data1)
-    #abdev=1.0
-    #if ndata > 3:
-    #    a,b = medfit.medfit(data1,data2,ndata,abdev)
-    #else:
-    #    a=0.0
-    #    b=1.0
-    #scidata_cord=scidata_cor-(a+b*darkavg)
+        if info >= 2:
+            xn=overscan.shape[0]
+            yn=overscan.shape[1]
+            model=fourierd2d(a,xn,yn,xoff,yoff)
+            imstat=imagestat(overscan-model,bpix)
+            plot_image(np.transpose(overscan-model),imstat,0.3,3.0)
 
-    image1=darkavg
-    image2=scidata_cor
-    data1=image1.flatten()
-    data2=image2.flatten()
+        #Apply overscan correction to science raster
+        scidata_cor=overscan_cor(scidata_c,overscan,a,bpix)
 
-    mind=0
-    maxd=8000
-    data1_bin,data2_bin,derr_bin=bindata(\
-                            data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],\
-                            data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],50)
-    b1=100
-    m1=0.3
-    m2=1.3
-    tp=2000
-    x0=[b1,m1,m2,tp]
-    ans=opt.least_squares(ls_seg_func,x0,args=[data1_bin,data2_bin,derr_bin])
-    newdark=seg_func(ans.x,darkavg)
-    newdark=newdark.reshape([darkavg.shape[0],darkavg.shape[1]])
-    scidata_cord=scidata_cor-newdark
+    if dark == 1:
+        #Apply Dark correction
+
+        ### OLD Dark correction REQUIRES meddif FORTRAN external ###
+        #image1=darkavg
+        #mind=darkavg.min()
+        #maxd=darkavg.max()
+        #image2=scidata_cor
+        #data1=image1.flatten()
+        #data2=image2.flatten()
+        #data1t=data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
+        #data2t=data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]
+        #data1=np.copy(data1t)
+        #data2=np.copy(data2t)
+        #ndata=len(data1)
+        #abdev=1.0
+        #if ndata > 3:
+        #    a,b = medfit.medfit(data1,data2,ndata,abdev)
+        #else:
+        #    a=0.0
+        #    b=1.0
+        #scidata_cord=scidata_cor-(a+b*darkavg)
+
+        ### New Dark-correction.  Not extensively tested. No Fortran dependence ### 
+        image1=darkavg
+        image2=scidata_cor
+        data1=image1.flatten()
+        data2=image2.flatten()
+
+        mind=0
+        maxd=8000
+        data1_bin,data2_bin,derr_bin=bindata(\
+                                data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],\
+                                data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],50)
+        b1=100
+        m1=0.3
+        m2=1.3
+        tp=2000
+        x0=[b1,m1,m2,tp]
+        ans=opt.least_squares(ls_seg_func,x0,args=[data1_bin,data2_bin,derr_bin])
+        newdark=seg_func(ans.x,darkavg)
+        newdark=newdark.reshape([darkavg.shape[0],darkavg.shape[1]])
+        scidata_cord=scidata_cor-newdark
+
+    #Return if only clipping and overscan is performed 
+    if cor == 1 and dark == 0:
+        #print ("Only performed clipping and overscan")
+        return scidata_cor
+    #Return if only dark correction is performed    
+    elif cor == 0 and dark == 1:
+        #print ("Only performed dark correction")
+        return scidata_cord
+    #Return if both clipping, overscan and dark correction is performed     
+    elif cor == 1 and dark == 1:
+        #print ("Performed both clipping and dark correction")
+        return scidata_cord
+    #Return original scidata if nothing was performed   
+    else:
+        #print ("No clipping, overscan and dark correction requested")
+        return scidata
 
     return scidata_cord;
 
