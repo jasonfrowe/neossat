@@ -3,7 +3,7 @@ import numpy as np
 import scipy.optimize as opt # For least-squares fits
 from scipy.fftpack import fft, fft2
 import scipy.spatial as spatial
-#import medfit  #Fortran backend for median fits
+import medfit  #Fortran backend for median fits
 from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder
 from photutils import CircularAperture
