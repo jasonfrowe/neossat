@@ -16,6 +16,69 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm #for better display of FITS images
 #for PCA analysis
 import scipy.linalg.lapack as la
+import re #to extract trim sections for FITS header
+
+
+def combinedarks(alldarkdata,mind=0,maxd=8000,b1=100,m1=0.3,m2=1.3,tp=2000):
+
+    #mind,maxd : range of data to consider when matching frames.  Keeping maxd relatively low avoids stars
+    # [b1,m1,m2,tp] - initial guess for solution.
+    #     b1=y-intercept for first segment
+    #     m1=slope for first segment
+    #     m2=slope for second segment
+    #     tp=division point from first to second segment
+
+
+    darkscaled=[]
+    ndark=len(alldarkdata)
+    for i in range(1,ndark):
+
+        image1=alldarkdata[i]
+        image2=alldarkdata[0]
+
+        data1=image1.flatten()
+        data2=image2.flatten()
+
+        if len(data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]) > 10 and \
+              len(data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]) > 10:
+            data1_bin,data2_bin,derr_bin=bindata(\
+                    data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],\
+                    data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],50)
+
+            x0=[b1,m1,m2,tp]
+            ans=opt.least_squares(ls_seg_func,x0,args=[data1_bin,data2_bin,derr_bin])
+            newdark=seg_func(ans.x,image1)
+            newdark=newdark.reshape([image1.shape[0],image1.shape[1]])
+            darkscaled.append(newdark)
+    darkscaled=np.array(darkscaled)
+
+    darkavg=np.median(darkscaled,axis=0)
+
+    return darkavg;
+
+def getimage_dim(filename):
+
+    hdulist = fits.open(filename)
+
+    trimsec=hdulist[0].header['TRIMSEC']
+    trim=re.findall(r'\d+',trimsec)
+
+    btrimsec=hdulist[0].header['BIASSEC']
+    btrim=re.findall(r'\d+',btrimsec)
+
+    n=len(trim)
+    for i in range(n):
+        trim[i]=int(trim[i])
+        btrim[i]=int(btrim[i])
+
+    xsc=int(trim[3])-int(trim[2])+1
+    ysc=int(trim[1])-int(trim[0])+1
+    xov=int(btrim[3])-int(btrim[2])+1 #I ignore the last few columns
+    yov=int(btrim[1])-int(btrim[0])-3
+
+    hdulist.close()
+
+    return trim,btrim,xsc,ysc,xov,yov
 
 def photprocess(filename,date,photap,bpix):
     
@@ -309,9 +372,9 @@ def calctransprocess(x1,y1,f1,x2,y2,f2,n2m=10):
     sortidx=np.argsort(f2)
     maxf2=f2[sortidx[np.max([len(f2)-n2m,0])]]
 
-    err, nm, matches = neo.match(x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+    err, nm, matches = match(x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
     if nm >= 3:
-        offset, rot = neo.findtrans(nm,matches,x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+        offset, rot = findtrans(nm,matches,x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
     else:
         offset = np.array([0, 0])
         rot = np.array([[0,0],[0,0]])
