@@ -1400,7 +1400,7 @@ def fourierdecomp(overscan,snrcut,fmax,xoff,yoff,T,bpix,info=0):
     return a;
 
 #Determine phase offset for science image
-def funcphase(aoff,a,xn,yn,scidata_in):
+def funcphase(aoff,a,xn,yn,scidata_in,stdcut=1.0e30):
     xoff=aoff[0]
     yoff=aoff[1]
     model=fourierd2d(a,xn,yn,xoff,yoff)
@@ -1410,15 +1410,34 @@ def funcphase(aoff,a,xn,yn,scidata_in):
     else:
         diff = (scidata_in-model)
     diffflat=diff.flatten()
+    diffflat=diffflat[np.abs(diffflat<stdcut)]
     return diffflat;
+
+def funcphase_noflatten(aoff,a,xn,yn,scidata_in):
+    xoff=aoff[0]
+    yoff=aoff[1]
+    model=fourierd2d(a,xn,yn,xoff,yoff)
+    sqmeanabs=np.sqrt(np.mean(np.abs(scidata_in)))
+    if sqmeanabs>0:
+        diff = (scidata_in-model)/sqmeanabs
+    else:
+        diff = (scidata_in-model)
+    return diff;
 
 #Apply Fourier correction from overscan
 def fouriercor(scidata_in,a):
     aoff=np.array([0.0,0.0])
     xn=scidata_in.shape[0]
     yn=scidata_in.shape[1]
-    aph=opt.leastsq(funcphase,aoff,args=(a,xn,yn,scidata_in-np.median(scidata_in)),factor=1)
-    #print(aph[0])
+    scidata_z=scidata_in-np.median(scidata_in)
+    aph=opt.leastsq(funcphase,aoff,args=(a,xn,yn,scidata_z),factor=1)
+
+    #Apply a sigma cut, to reduce the effect of stars in the image
+    aoff=np.array([aph[0][0],aph[0][1]])
+    diff=funcphase_noflatten(aoff,a,xn,yn,scidata_z)
+    stdcut=3.0*np.std(diff)
+    aph=opt.leastsq(funcphase,aoff,args=(a,xn,yn,scidata_z,stdcut),factor=1)
+
     xoff=aph[0][0] #Apply offsets
     yoff=aph[0][1]
     model=fourierd2d(a,xn,yn,xoff,yoff)
