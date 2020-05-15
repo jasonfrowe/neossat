@@ -84,7 +84,7 @@ def photprocess(filename,date,photap,bpix):
     
     scidata=read_fitsdata(filename)
     
-    mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, iters=5)
+    mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
     daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
     sources = daofind(scidata - median)
     
@@ -203,7 +203,7 @@ def get_master_phot4all(workdir,lightlist,jddate,transall,master_phot_table,phot
         if (np.abs(1.0-mat[0][0]) < 0.05) and (np.abs(1.0-mat[1][1]) < 0.05): #keep only sane transforms
 
             scidata=read_fitsdata(workdir+lightlist[n2])
-            mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, iters=5)
+            mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
 
             #Get centroids
             x2 = np.array(master_phot_table['xcenter'][:])
@@ -948,7 +948,7 @@ def lightprocess(filename,date,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,p
     scidata_cord=\
       clean_sciimage(filename,darkavg,xsc,ysc,xov,yov,snrcut,fmax,xoff,yoff,T,info,bpix)
 
-    mean, median, std = sigma_clipped_stats(scidata_cord, sigma=3.0, iters=5)
+    mean, median, std = sigma_clipped_stats(scidata_cord, sigma=3.0, maxiters=5)
 
     daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
     sources = daofind(scidata_cord - median)
