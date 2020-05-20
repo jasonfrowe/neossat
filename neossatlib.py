@@ -197,199 +197,229 @@ def get_pcavec(photometry_jd, photometry, exptime, minflux=0, id_exclude=None):
 
     return pcavec
 
-def get_master_phot4all(workdir,lightlist,jddate,transall,master_phot_table,photap,\
-        bpix):
-    
-    #create arrays to store photometry 
-    photometry=[]
-    photometry_jd=[]
-    
-    #loop over all images.  
+
+def get_master_phot4all(workdir, lightlist, jddate, transall, master_phot_table, photap, bpix):
+    """"""
+
+    # Create arrays to store photometry.
+    photometry = []
+    photometry_jd = []
+
+    # Loop over all images.
     for n2 in range(len(lightlist)):
 
-        #Get transformation matrix 
-        mat=np.array([[transall[n2][1][0][0], transall[n2][1][0][1]],\
-            [transall[n2][1][1][0], transall[n2][1][1][1]]])
+        # Get transformation matrix.
+        mat = np.array([[transall[n2][1][0][0], transall[n2][1][0][1]],
+                        [transall[n2][1][1][0], transall[n2][1][1][1]]])
 
-        if (np.abs(1.0-mat[0][0]) < 0.05) and (np.abs(1.0-mat[1][1]) < 0.05): #keep only sane transforms
+        if (np.abs(1.0-mat[0][0]) < 0.05) and (np.abs(1.0-mat[1][1]) < 0.05):  # Keep only sane transforms.
 
-            scidata=read_fitsdata(workdir+lightlist[n2])
+            scidata = read_fitsdata(workdir+lightlist[n2])
             mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
 
-            #Get centroids
+            # Get centroids.
             x2 = np.array(master_phot_table['xcenter'][:])
             y2 = np.array(master_phot_table['ycenter'][:])
-            #Invert transformation matix 
-            invmat=np.linalg.inv(mat)
-            ##get copy of original sources
-            #sources_new=np.copy(sources)
-            #apply transformation 
+            # Invert transformation matix.
+            invmat = np.linalg.inv(mat)
+            # Get copy of original sources.
+            # sources_new = np.copy(sources)
+
+            # Apply transformation.
             xnew = -transall[n2][0][0] + invmat[0][0]*x2 + invmat[0][1]*y2
             ynew = -transall[n2][0][1] + invmat[1][0]*x2 + invmat[1][1]*y2
 
             positions_new = (xnew, ynew)
             apertures_new = CircularAperture(positions_new, r=photap)
-            phot_table_new = aperture_photometry(scidata-median, apertures_new)
+            phot_table_new = aperture_photometry(scidata - median, apertures_new)
 
             photometry_jd.append(jddate[n2])
             photometry.append(phot_table_new)
 
-    photometry_jd=np.array(photometry_jd)    
-    
-    return photometry, photometry_jd;
+    photometry_jd = np.array(photometry_jd)
+
+    return photometry, photometry_jd
 
 
-def bindata(time,data,tbin):
-    bin_time=[]
-    bin_flux=[]
-    bin_ferr=[]
-    npt=len(time)
-    tmin=np.min(time)
-    tmax=np.max(time)
-    bin=[int((t-tmin)/tbin) for t in time]
-    bin=np.array(bin)
-    #nc=0
-    for b in range(np.max(bin)+1):
-        npt=len(bin[bin==b])
-        #nc=nc+npt
-        if npt>3:
-            #print(npt)
-            bint1=np.median(time[bin==b])
-            binf1=np.median(data[bin==b])
-            binfe=np.std(data[bin==b])/np.sqrt(npt)
+def bindata(time, data, tbin):  # TODO it might be possible to clean this one up a bit.
+    """"""
+
+    bin_time = []
+    bin_flux = []
+    bin_ferr = []
+    npt = len(time)
+    tmin = np.min(time)
+    tmax = np.max(time)
+    bins = np.array([int((t-tmin)/tbin) for t in time])
+
+    # nc = 0
+    for b in range(np.max(bins)+1):
+        npt = len(bins[bins == b])
+        # nc = nc + npt
+        if npt > 3:
+            # print(npt)
+            bint1 = np.median(time[bins == b])
+            binf1 = np.median(data[bins == b])
+            binfe = np.std(data[bins == b])/np.sqrt(npt)
+
             bin_time.append(bint1)
             bin_flux.append(binf1)
             bin_ferr.append(binfe)
-    bin_time=np.array(bin_time)
-    bin_flux=np.array(bin_flux)
-    bin_ferr=np.array(bin_ferr)
+
+    bin_time = np.array(bin_time)
+    bin_flux = np.array(bin_flux)
+    bin_ferr = np.array(bin_ferr)
+
+    # print(nc)
+
+    return bin_time, bin_flux, bin_ferr
 
 
-    #print(nc)
+def pca_model(pars, pca):
+    """Our Model"""
 
-    return bin_time,bin_flux,bin_ferr;
-
-def pca_model(pars,pca):
-    "Our Model"
-
-    m=pars[0]
+    m = pars[0]
     for i in range(len(pars)-1):
-        #print(i,pca[:,i+1])
-        m=m+pars[i+1]*pca[:,i]
+        # print(i, pca[:, i+1])
+        m = m + pars[i+1]*pca[:, i]
 
-    #print(m)
-    return m;
+    # print(m)
+    return m
 
-def pca_func(pars,phot,pca,icut):
-    "Residuals"
 
-    m=pca_model(pars,pca)
-    npt=len(phot)
-    diff=[]
+def pca_func(pars, phot, pca, icut):
+    """Residuals"""
+
+    m = pca_model(pars, pca)
+    npt = len(phot)
+    diff = []
     for i in range(npt):
-        if icut[i]==0:
-            diff.append(phot[i]-m[i])
+        if icut[i] == 0:
+            diff.append(phot[i] - m[i])
         else:
             diff.append(0)
 
-    return diff;
+    return diff
 
-def replaceoutlier(flux,icut):
 
-    gmedian=np.median(flux[icut==0])
+def replaceoutlier(flux, icut):
+    """"""
 
-    nsampmax=25 #local sample size
-    npt=len(flux)
+    gmedian = np.median(flux[icut == 0])
+
+    nsampmax = 25  # Local sample size.
+    npt = len(flux)
 
     for i in range(npt):
-        if icut[i]!=0:
-            i1=np.max([0,i-nsampmax])
-            i2=np.min([npt-1,i+nsampmax])
-            samps=flux[i1:i2]
-            if len(samps[icut[i1:i2]==0])>1:
-                median=np.median(samps[icut[i1:i2]==0])
-                #print(i,i1,i2,median)
+        if icut[i] != 0:
+            i1 = np.max([0, i-nsampmax])
+            i2 = np.min([npt-1, i+nsampmax])
+            samps = flux[i1:i2]
+            if len(samps[icut[i1:i2] == 0]) > 1:
+                median = np.median(samps[icut[i1:i2] == 0])
+                # print(i, i1, i2, median)
                 if math.isnan(median):
-                    flux[i]=gmedian
+                    flux[i] = gmedian
                 else:
-                    flux[i]=median
+                    flux[i] = median
             else:
-                flux[i]=gmedian
+                flux[i] = gmedian
+
     return flux
 
-def sigclip(flux,icut):
-    #Global Sigma clipping
-    npt=len(flux)
-    icut2=np.zeros(npt,dtype='int')
 
-    stdcut=3.0
-    niter=3
+def sigclip(flux, icut):
+    """"""
+
+    # Global Sigma clipping.
+    npt = len(flux)
+    icut2 = np.zeros(npt, dtype='int')
+
+    stdcut = 3.0
+    niter = 3
     for i in range(niter):
-        mean=np.mean(flux[(icut2==0) & (icut==0)])
-        std=np.std(flux[(icut2==0) & (icut==0)])
-        #print(mean,std)
+        mask = (icut2 == 0) & (icut == 0)
+        mean = np.mean(flux[mask])
+        std = np.std(flux[mask])
+        # print(mean, std)
         for j in range(npt):
-            if np.abs(flux[j]-mean)>stdcut*std:
-                icut2[j]=1
-        #print(np.sum(icut2))
+            if np.abs(flux[j] - mean) > stdcut*std:
+                icut2[j] = 1
+        # print(np.sum(icut2))
+
     return icut2
 
-def cutoutliers(flux):
-    npt=len(flux)
-    icut=np.zeros(npt,dtype='int')
 
-    nsampmax=25 #Number of nearby samples for stats
-    sigma=3.0   #threshold for removing outliers
+def cutoutliers(flux):
+    """"""
+
+    npt = len(flux)
+    icut = np.zeros(npt, dtype='int')
+
+    nsampmax = 25  # Number of nearby samples for stats.
+    sigma = 3.0  # Threshold for removing outliers.
 
     for i in range(npt):
         if math.isnan(flux[i]):
-            icut[i]=1
+            icut[i] = 1
 
-    #print(npt)
-    for i in range(1,npt-1):
+    # print(npt)
+    for i in range(1, npt-1):
 
-        i1=np.max([0,i-nsampmax])
-        i2=np.min([npt-1,i+nsampmax])
-        samps=flux[i1:i2]
-        dd_median=meddiff(samps[icut[i1:i2]==0])
-        threshold=dd_median*sigma
+        i1 = np.max([0, i-nsampmax])
+        i2 = np.min([npt-1, i+nsampmax])
+        samps = flux[i1:i2]
+        dd_median = meddiff(samps[icut[i1:i2] == 0])
+        threshold = dd_median*sigma
 
-        vp=flux[i]-flux[i+1]
-        vm=flux[i]-flux[i-1]
+        vp = flux[i] - flux[i+1]
+        vm = flux[i] - flux[i-1]
 
         if (np.abs(vp) > threshold) and (np.abs(vm) > threshold) and (vp/vm > 0):
-            icut[i]=1 #cut data point
+            icut[i] = 1  # Cut data point.
 
-        #print(i,i1,i2,dd_median,icut[i])
-        #input()
+        # print(i, i1, i2, dd_median, icut[i])
+        # input()
 
     return icut
 
-def meddiff(x):
-    npt=len(x)
-    dd=np.zeros(npt-1)
-    for i in range(npt-1):
-        dd[i]=np.abs(x[i]-x[i-1])
 
-    dd_median=np.median(dd)
+def meddiff(x):
+    """"""
+
+    # npt = len(x)
+    # dd = np.zeros(npt-1)
+    # for i in range(npt-1):
+    #     dd[i] = np.abs(x[i] - x[i-1])
+
+    dd = np.abs(np.diff(x))
+    dd_median = np.median(dd)
 
     return dd_median
 
-def calctransprocess(x1,y1,f1,x2,y2,f2,n2m=10):
 
-    sortidx=np.argsort(f1)
-    maxf1=f1[sortidx[np.max([len(f1)-n2m,0])]]
+def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
+    """"""
 
-    sortidx=np.argsort(f2)
-    maxf2=f2[sortidx[np.max([len(f2)-n2m,0])]]
+    sortidx = np.argsort(f1)
+    maxf1 = f1[sortidx[np.max([len(f1)-n2m, 0])]]  # TODO use maximum instead of max.
 
-    err, nm, matches = match(x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+    sortidx = np.argsort(f2)
+    maxf2 = f2[sortidx[np.max([len(f2)-n2m, 0])]]  # TODO use maximum instead of max.
+
+    mask1 = f1 > maxf1
+    mask2 = f2 > maxf2
+
+    err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
     if nm >= 3:
-        offset, rot = findtrans(nm,matches,x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+        offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
     else:
         offset = np.array([0, 0])
-        rot = np.array([[0,0],[0,0]])
-    return offset, rot;
+        rot = np.array([[0, 0],
+                        [0, 0]])
+
+    return offset, rot
+
 
 def match_points(current_points, prior_points, distance_cutoff):
     """
@@ -403,8 +433,8 @@ def match_points(current_points, prior_points, distance_cutoff):
     """
 
     # Initialize matched indices to -1 and distances to the cutoff value.
-    matches = np.ones((current_points.shape[0], 2))*-1
-    matches[:,1] = distance_cutoff
+    matches = -np.ones((current_points.shape[0], 2))
+    matches[:, 1] = distance_cutoff
 
     # Initialize index numbers for current points
     current_idx = np.asarray(range(current_points.shape[0]))
@@ -427,378 +457,432 @@ def match_points(current_points, prior_points, distance_cutoff):
     matched_indices = np.multiply(matched_indices, in_bounds)
 
     # Add the matching data to the output
-    matches[current_idx[matched_indices],0] = prior_idx[matches_a[1]][matched_indices].astype(np.int)
-    matches[current_idx[matched_indices],1] = matches_a[0][matched_indices]
+    matches[current_idx[matched_indices], 0] = prior_idx[matches_a[1]][matched_indices].astype(np.int)
+    matches[current_idx[matched_indices], 1] = matches_a[0][matched_indices]
 
     return matches
 
-def calctransprocess(x1,y1,f1,x2,y2,f2,n2m=10):
 
-    sortidx=np.argsort(f1)
-    maxf1=f1[sortidx[np.max([len(f1)-n2m,0])]]
+def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):  # TODO function already exists and is the same?
+    """"""
 
-    sortidx=np.argsort(f2)
-    maxf2=f2[sortidx[np.max([len(f2)-n2m,0])]]
+    sortidx = np.argsort(f1)
+    maxf1 = f1[sortidx[np.max([len(f1)-n2m, 0])]]  # TODO use maximum instead of max.
 
-    err, nm, matches = match(x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+    sortidx = np.argsort(f2)
+    maxf2 = f2[sortidx[np.max([len(f2)-n2m, 0])]]  # TODO use maximum instead of max.
+
+    mask1 = f1 > maxf1
+    mask2 = f2 > maxf2
+
+    err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
     if nm >= 3:
-        offset, rot = findtrans(nm,matches,x1[f1>maxf1],y1[f1>maxf1],x2[f2>maxf2],y2[f2>maxf2])
+        offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
     else:
         offset = np.array([0, 0])
-        rot = np.array([[0,0],[0,0]])
-    return offset, rot;
+        rot = np.array([[0, 0],
+                        [0, 0]])
 
-def findtrans(nm,matches,x1,y1,x2,y2):
+    return offset, rot
 
-    #pre-allocate arrays
-    #We are solving the problem A.x=b 
-    A=np.zeros([nm,3])
-    bx=np.zeros(nm)
-    by=np.zeros(nm)
-    #set up matricies
-    A[:,0]=1
+
+def findtrans(nm, matches, x1, y1, x2, y2):
+    """"""
+
+    # Pre-allocate arrays.
+    # We are solving the problem A.x = b.
+    A = np.zeros([nm, 3])
+    bx = np.zeros(nm)
+    by = np.zeros(nm)
+
+    # Set up matricies.
+    A[:, 0] = 1
     for n in range(nm):
-        A[n,1]=x2[matches[n,1]]
-        A[n,2]=y2[matches[n,1]]
-        bx[n]=x1[matches[n,0]]
-        by[n]=y1[matches[n,0]]
-    
-    #Solve transformation with SVD
-    u, s, vh = np.linalg.svd(A,full_matrices=False)
-    prd=np.transpose(vh)*1/s
-    prd=np.matmul(prd,np.transpose(u))
-    xoff=np.matmul(prd,bx)
-    yoff=np.matmul(prd,by)
-    
-    #Store our solution for output 
-    offset=np.array([xoff[0], yoff[0]])
-    rot=np.array([[xoff[1],xoff[2]],[yoff[1],yoff[2]]])
-    #print(offset)
-    #print(rot)
-    
-    return offset, rot;
+        A[n, 1] = x2[matches[n, 1]]
+        A[n, 2] = y2[matches[n, 1]]
+        bx[n] = x1[matches[n, 0]]
+        by[n] = y1[matches[n, 0]]
 
-def match(x1,y1,x2,y2,eps=0.001):
+    # Solve transformation with SVD.
+    u, s, vh = np.linalg.svd(A, full_matrices=False)
+    prd = np.transpose(vh)*1/s
+    prd = np.matmul(prd, np.transpose(u))
+    xoff = np.matmul(prd, bx)
+    yoff = np.matmul(prd, by)
 
-    #Defaults for return values
-    err=0.0
-    nm=0.0
-    matches=[]
+    # Store our solution for output.
+    offset = np.array([xoff[0], yoff[0]])
+    rot = np.array([[xoff[1], xoff[2]],
+                    [yoff[1], yoff[2]]])
 
-    xmax=np.max(np.concatenate([x1,x2])) #Get max x,y position to get an idea how big the CCD frame is.
-    ymax=np.max(np.concatenate([y1,y2]))
-    xdim=np.power(2,np.floor(np.log2(xmax))+1) #Estimate of CCD dimensions (assumes 2^n size)
-    ydim=np.power(2,np.floor(np.log2(ymax))+1)
-    # tunable parameters for tolerence of matches
-    eps2=eps*xdim*eps*ydim
+    # print(offset)
+    # print(rot)
 
-    nx1=len(x1) #number of stars in frame #1
-    nx2=len(x2) #number of stars in frame #2
+    return offset, rot
+
+
+def match(x1, y1, x2, y2, eps=1e-3):  # TODO this function could do with some clean-up.
+
+    # Defaults for return values.
+    err = 0.0
+    nm = 0.0
+    matches = []
+
+    xmax = np.max(np.concatenate([x1, x2]))  # Get max x,y position to get an idea how big the CCD frame is.
+    ymax = np.max(np.concatenate([y1, y2]))
+    xdim = np.power(2, np.floor(np.log2(xmax))+1)  # Estimate of CCD dimensions (assumes 2^n size).
+    ydim = np.power(2, np.floor(np.log2(ymax))+1)
+
+    # Tunable parameters for tolerence of matches.
+    eps2 = eps*xdim*eps*ydim
+
+    nx1 = len(x1)  # Number of stars in frame #1
+    nx2 = len(x2)  # Number of stars in frame #2
     if nx2 < 4:
         print('Matching Failed')
-        err=-1.0
+        err = -1.0
         return err, nm, matches
     if nx1 < 4:
         print('Matching Failed')
-        err=-1.0
+        err = -1.0
         return err, nm, matches
 
-    # number of expected triangles = n!/[(n-3)! * 3!] (see Pascals Triangle)
-    ntri1=int(np.math.factorial(nx1)/(np.math.factorial(nx1-3)*6))
-    ntri2=int(np.math.factorial(nx2)/(np.math.factorial(nx2-3)*6))
+    # Number of expected triangles = n!/[(n-3)! * 3!] (see Pascals Triangle)
+    ntri1 = int(np.math.factorial(nx1)/(np.math.factorial(nx1-3)*6))
+    ntri2 = int(np.math.factorial(nx2)/(np.math.factorial(nx2-3)*6))
 
-    # Pre-allocating arrays
-    tA1=np.zeros(ntri1,dtype=int);tA2=np.zeros(ntri1,dtype=int);tA3=np.zeros(ntri1,dtype=int)
-    tB1=np.zeros(ntri2,dtype=int);tB2=np.zeros(ntri2,dtype=int);tB3=np.zeros(ntri2,dtype=int)
-    lpA=np.zeros(ntri1);lpB=np.zeros(ntri2)
-    orA=np.zeros(ntri1,dtype=int);orB=np.zeros(ntri2,dtype=int)
-    RA=np.zeros(ntri1);RB=np.zeros(ntri2)
-    tolRA=np.zeros(ntri1);tolRB=np.zeros(ntri2)
-    CA=np.zeros(ntri1);CB=np.zeros(ntri2)
-    tolCA=np.zeros(ntri1);tolCB=np.zeros(ntri2)
+    # Pre-allocating arrays TODO These variable names are not very descriptive.
+    tA1 = np.zeros(ntri1, dtype=int)
+    tA2 = np.zeros(ntri1, dtype=int)
+    tA3 = np.zeros(ntri1, dtype=int)
+    tB1 = np.zeros(ntri2, dtype=int)
+    tB2 = np.zeros(ntri2, dtype=int)
+    tB3 = np.zeros(ntri2, dtype=int)
+    lpA = np.zeros(ntri1)
+    lpB = np.zeros(ntri2)
+    orA = np.zeros(ntri1, dtype=int)
+    orB = np.zeros(ntri2, dtype=int)
+    RA = np.zeros(ntri1)
+    RB = np.zeros(ntri2)
+    tolRA = np.zeros(ntri1)
+    tolRB = np.zeros(ntri2)
+    CA = np.zeros(ntri1)
+    CB = np.zeros(ntri2)
+    tolCA = np.zeros(ntri1)
+    tolCB = np.zeros(ntri2)
 
-    # make all possible triangles for A set of co-ordinates.
-    nt1=-1 #Count number of triangles
+    # Make all possible triangles for A set of co-ordinates.
+    # TODO this repeats for the B set, can this be made a function?
+    nt1 = -1  # Count number of triangles.
     for n1 in range(nx1-2):
-        for n2 in range(n1+1,nx1-1):
-            for n3 in range(n2+1,nx1):
-                nt1=nt1+1 # increase counter for triangles
-
-                #calculate distances
-                tp1=np.sqrt(np.power(x1[n1]-x1[n2],2)+np.power(y1[n1]-y1[n2],2))
-                tp2=np.sqrt(np.power(x1[n2]-x1[n3],2)+np.power(y1[n2]-y1[n3],2))
-                tp3=np.sqrt(np.power(x1[n3]-x1[n1],2)+np.power(y1[n3]-y1[n1],2))
-
-                # beware of equal distance cases?
-                if tp1==tp2:
-                    tp1=tp1+0.0001
-                if tp1==tp3:
-                    tp1=tp1+0.0001
-                if tp2==tp3:
-                    tp2=tp2+0.0001
-
-                # there are now six cases
-                if (tp1 > tp2) and (tp2 > tp3):
-                    tA1[nt1]=np.copy(n1); tA2[nt1]=np.copy(n3); tA3[nt1]=np.copy(n2);
-                    r3=np.copy(tp1) #long length, (Equations 2 and 3)
-                    r2=np.copy(tp3) #short side
-                elif (tp1 > tp3) and (tp3 > tp2):
-                    tA1[nt1]=np.copy(n2); tA2[nt1]=np.copy(n3); tA3[nt1]=np.copy(n1);
-                    r3=np.copy(tp1)
-                    r2=np.copy(tp2)
-                elif (tp2 > tp1) and (tp1 > tp3):
-                    tA1[nt1]=np.copy(n3); tA2[nt1]=np.copy(n1); tA3[nt1]=np.copy(n2);
-                    r3=np.copy(tp2)
-                    r2=np.copy(tp3)
-                elif (tp3 > tp1) and (tp1 > tp2):
-                    tA1[nt1]=np.copy(n3); tA2[nt1]=np.copy(n2); tA3[nt1]=np.copy(n1);
-                    r3=np.copy(tp3);
-                    r2=np.copy(tp2);
-                elif (tp2 > tp3) and (tp3 > tp1):
-                    tA1[nt1]=np.copy(n2); tA2[nt1]=np.copy(n1); tA3[nt1]=np.copy(n3);
-                    r3=np.copy(tp2);
-                    r2=np.copy(tp1);
-                elif (tp3 > tp2) and (tp2 > tp1):
-                    tA1[nt1]=np.copy(n1); tA2[nt1]=np.copy(n2); tA3[nt1]=np.copy(n3);
-                    r3=np.copy(tp3);
-                    r2=np.copy(tp1);
-
-                #Equation 1
-                RA[nt1]=r3/r2
-                #Equation 5
-                CA[nt1]=((x1[tA3[nt1]]-x1[tA1[nt1]])*(x1[tA2[nt1]]-x1[tA1[nt1]])+ \
-                    (y1[tA3[nt1]]-y1[tA1[nt1]])*(y1[tA2[nt1]]-y1[tA1[nt1]]))/(r3*r2)
-                #Equation 4
-                fact=np.power(1/r3,2)-CA[nt1]/(r3*r2)+1/np.power(r2,2)
-                tolRA[nt1]=2*np.power(RA[nt1],2)*eps2*fact
-                #Equation 6
-                S2=1-np.power(CA[nt1],2) #Sine squared
-                tolCA[nt1]=2*S2*eps2*fact+3*np.power(CA[nt1],2)*eps2*eps2*np.power(fact,2)
-                #logarithm of triangle perimeter
-                lpA[nt1]=np.log10(tp1+tp2+tp3)
-                #Orientation of triangle (-1=counterclockwise +1=clockwise)
-                orA[nt1]=orient(x1[n1],y1[n1],x1[n2],y1[n2],x1[n3],y1[n3]);
-
-    # make all possible triangles for B set of co-ordinates.
-    nt2=-1 #count number of triangles.
-    for n1 in range(nx2-2):
-        for n2 in range(n1+1,nx2-1):
-            for n3 in range(n2+1,nx2):
-                nt2=nt2+1 #increase counter for triangles.
+        for n2 in range(n1+1, nx1-1):
+            for n3 in range(n2+1, nx1):
+                nt1 = nt1+1  # Increase counter for triangles.
 
                 # Calculate distances.
-                tp1=np.sqrt(np.power(x2[n1]-x2[n2],2)+np.power(y2[n1]-y2[n2],2))
-                tp2=np.sqrt(np.power(x2[n2]-x2[n3],2)+np.power(y2[n2]-y2[n3],2))
-                tp3=np.sqrt(np.power(x2[n3]-x2[n1],2)+np.power(y2[n3]-y2[n1],2))
+                tp1 = np.sqrt(np.power(x1[n1]-x1[n2], 2)+np.power(y1[n1]-y1[n2], 2))
+                tp2 = np.sqrt(np.power(x1[n2]-x1[n3], 2)+np.power(y1[n2]-y1[n3], 2))
+                tp3 = np.sqrt(np.power(x1[n3]-x1[n1], 2)+np.power(y1[n3]-y1[n1], 2))
+
+                # Beware of equal distance cases?
+                if tp1 == tp2:
+                    tp1 = tp1 + 0.0001
+                if tp1 == tp3:
+                    tp1 = tp1 + 0.0001
+                if tp2 == tp3:
+                    tp2 = tp2 + 0.0001
+
+                # There are now six cases.
+                if (tp1 > tp2) and (tp2 > tp3):
+                    tA1[nt1] = np.copy(n1)
+                    tA2[nt1] = np.copy(n3)
+                    tA3[nt1] = np.copy(n2)
+                    r3 = np.copy(tp1)  # Long length, (Equations 2 and 3).
+                    r2 = np.copy(tp3)  # Short side.
+                elif (tp1 > tp3) and (tp3 > tp2):
+                    tA1[nt1] = np.copy(n2)
+                    tA2[nt1] = np.copy(n3)
+                    tA3[nt1] = np.copy(n1)
+                    r3 = np.copy(tp1)
+                    r2 = np.copy(tp2)
+                elif (tp2 > tp1) and (tp1 > tp3):
+                    tA1[nt1] = np.copy(n3)
+                    tA2[nt1] = np.copy(n1)
+                    tA3[nt1] = np.copy(n2)
+                    r3 = np.copy(tp2)
+                    r2 = np.copy(tp3)
+                elif (tp3 > tp1) and (tp1 > tp2):
+                    tA1[nt1] = np.copy(n3)
+                    tA2[nt1] = np.copy(n2)
+                    tA3[nt1] = np.copy(n1)
+                    r3 = np.copy(tp3)
+                    r2 = np.copy(tp2)
+                elif (tp2 > tp3) and (tp3 > tp1):
+                    tA1[nt1] = np.copy(n2)
+                    tA2[nt1] = np.copy(n1)
+                    tA3[nt1] = np.copy(n3)
+                    r3 = np.copy(tp2)
+                    r2 = np.copy(tp1)
+                elif (tp3 > tp2) and (tp2 > tp1):
+                    tA1[nt1] = np.copy(n1)
+                    tA2[nt1] = np.copy(n2)
+                    tA3[nt1] = np.copy(n3)
+                    r3 = np.copy(tp3)
+                    r2 = np.copy(tp1)
+
+                # Equation 1
+                RA[nt1] = r3/r2
+                # Equation 5
+                CA[nt1] = ((x1[tA3[nt1]]-x1[tA1[nt1]])*(x1[tA2[nt1]]-x1[tA1[nt1]]) +
+                           (y1[tA3[nt1]]-y1[tA1[nt1]])*(y1[tA2[nt1]]-y1[tA1[nt1]]))/(r3*r2)
+                # Equation 4
+                fact = np.power(1/r3, 2)-CA[nt1]/(r3*r2)+1/np.power(r2, 2)
+                tolRA[nt1] = 2*np.power(RA[nt1], 2)*eps2*fact
+                # Equation 6
+                S2 = 1-np.power(CA[nt1], 2)  # Sine squared.
+                tolCA[nt1] = 2*S2*eps2*fact+3*np.power(CA[nt1], 2)*eps2*eps2*np.power(fact, 2)
+                # Logarithm of triangle perimeter.
+                lpA[nt1] = np.log10(tp1+tp2+tp3)
+                # Orientation of triangle (-1=counterclockwise +1=clockwise).
+                orA[nt1] = orient(x1[n1], y1[n1], x1[n2], y1[n2], x1[n3], y1[n3])
+
+    # Make all possible triangles for B set of co-ordinates.
+    nt2 = -1  # Count number of triangles.
+    for n1 in range(nx2-2):
+        for n2 in range(n1+1, nx2-1):
+            for n3 in range(n2+1, nx2):
+                nt2 = nt2+1  # Increase counter for triangles.
+
+                # Calculate distances.
+                tp1 = np.sqrt(np.power(x2[n1]-x2[n2], 2)+np.power(y2[n1]-y2[n2], 2))
+                tp2 = np.sqrt(np.power(x2[n2]-x2[n3], 2)+np.power(y2[n2]-y2[n3], 2))
+                tp3 = np.sqrt(np.power(x2[n3]-x2[n1], 2)+np.power(y2[n3]-y2[n1], 2))
 
                 # beware of equal distance cases?
-                if tp1==tp2:
-                    tp1=tp1+0.0001
-                if tp1==tp3:
-                    tp1=tp1+0.0001
-                if tp2==tp3:
-                    tp2=tp2+0.0001
+                if tp1 == tp2:
+                    tp1 = tp1+0.0001
+                if tp1 == tp3:
+                    tp1 = tp1+0.0001
+                if tp2 == tp3:
+                    tp2 = tp2+0.0001
 
                 # there are now six cases
                 if (tp1 > tp2) and (tp2 > tp3):
-                    tB1[nt2]=np.copy(n1); tB2[nt2]=np.copy(n3); tB3[nt2]=np.copy(n2);
-                    r3=np.copy(tp1) #long length, (Equations 2 and 3)
-                    r2=np.copy(tp3) #short side
+                    tB1[nt2] = np.copy(n1)
+                    tB2[nt2] = np.copy(n3)
+                    tB3[nt2] = np.copy(n2)
+                    r3 = np.copy(tp1)  # Long length, (Equations 2 and 3).
+                    r2 = np.copy(tp3)  # Short side.
                 elif (tp1 > tp3) and (tp3 > tp2):
-                    tB1[nt2]=np.copy(n2); tB2[nt2]=np.copy(n3); tB3[nt2]=np.copy(n1);
-                    r3=np.copy(tp1)
-                    r2=np.copy(tp2)
+                    tB1[nt2] = np.copy(n2)
+                    tB2[nt2] = np.copy(n3)
+                    tB3[nt2] = np.copy(n1)
+                    r3 = np.copy(tp1)
+                    r2 = np.copy(tp2)
                 elif (tp2 > tp1) and (tp1 > tp3):
-                    tB1[nt2]=np.copy(n3); tB2[nt2]=np.copy(n1); tB3[nt2]=np.copy(n2);
-                    r3=np.copy(tp2)
-                    r2=np.copy(tp3)
+                    tB1[nt2] = np.copy(n3)
+                    tB2[nt2] = np.copy(n1)
+                    tB3[nt2] = np.copy(n2)
+                    r3 = np.copy(tp2)
+                    r2 = np.copy(tp3)
                 elif (tp3 > tp1) and (tp1 > tp2):
-                    tB1[nt2]=np.copy(n3); tB2[nt2]=np.copy(n2); tB3[nt2]=np.copy(n1);
-                    r3=np.copy(tp3)
-                    r2=np.copy(tp2)
+                    tB1[nt2] = np.copy(n3)
+                    tB2[nt2] = np.copy(n2)
+                    tB3[nt2] = np.copy(n1)
+                    r3 = np.copy(tp3)
+                    r2 = np.copy(tp2)
                 elif (tp2 > tp3) and (tp3 > tp1):
-                    tB1[nt2]=np.copy(n2); tB2[nt2]=np.copy(n1); tB3[nt2]=np.copy(n3);
-                    r3=np.copy(tp2)
-                    r2=np.copy(tp1)
+                    tB1[nt2] = np.copy(n2)
+                    tB2[nt2] = np.copy(n1)
+                    tB3[nt2] = np.copy(n3)
+                    r3 = np.copy(tp2)
+                    r2 = np.copy(tp1)
                 elif (tp3 > tp2) and (tp2 > tp1):
-                    tB1[nt2]=np.copy(n1); tB2[nt2]=np.copy(n2); tB3[nt2]=np.copy(n3);
-                    r3=np.copy(tp3)
-                    r2=np.copy(tp1)
-                #Equation 1
-                RB[nt2]=r3/r2;
-                #Equation 5
-                CB[nt2]=((x2[tB3[nt2]]-x2[tB1[nt2]])*(x2[tB2[nt2]]-x2[tB1[nt2]])+ \
-                    (y2[tB3[nt2]]-y2[tB1[nt2]])*(y2[tB2[nt2]]-y2[tB1[nt2]]))/(r3*r2)
-                #Equation 4
-                fact=np.power(1/r3,2)-CB[nt2]/(r3*r2)+1/np.power(r2,2)
-                tolRB[nt2]=2*np.power(RB[nt2],2)*eps2*fact
-                #Equation 6
-                S2=1-np.power(CB[nt2],2) #Sine of angle squared
-                tolCB[nt2]=2*S2*eps2*fact+3*np.power(CB[nt2],2)*eps2*eps2*np.power(fact,2)
-                #logarithm of triangle perimeter
-                lpB[nt2]=np.log10(tp1+tp2+tp3)
-                #Orientation of triangle (-1=counterclockwise +1=clockwise)
-                orB[nt2]=orient(x2[n1],y2[n1],x2[n2],y2[n2],x2[n3],y2[n3]);
+                    tB1[nt2] = np.copy(n1)
+                    tB2[nt2] = np.copy(n2)
+                    tB3[nt2] = np.copy(n3)
+                    r3 = np.copy(tp3)
+                    r2 = np.copy(tp1)
 
-    #Scan through the two
-    nmatch=0
+                # Equation 1
+                RB[nt2] = r3/r2
+                # Equation 5
+                CB[nt2] = ((x2[tB3[nt2]]-x2[tB1[nt2]])*(x2[tB2[nt2]]-x2[tB1[nt2]]) +
+                           (y2[tB3[nt2]]-y2[tB1[nt2]])*(y2[tB2[nt2]]-y2[tB1[nt2]]))/(r3*r2)
+                # Equation 4
+                fact = np.power(1/r3, 2)-CB[nt2]/(r3*r2)+1/np.power(r2, 2)
+                tolRB[nt2] = 2*np.power(RB[nt2], 2)*eps2*fact
+                # Equation 6
+                S2 = 1-np.power(CB[nt2], 2)  # Sine of angle squared.
+                tolCB[nt2] = 2*S2*eps2*fact+3*np.power(CB[nt2], 2)*eps2*eps2*np.power(fact, 2)
+                # Logarithm of triangle perimeter.
+                lpB[nt2] = np.log10(tp1+tp2+tp3)
+                # Orientation of triangle (-1=counterclockwise +1=clockwise).
+                orB[nt2] = orient(x2[n1], y2[n1], x2[n2], y2[n2], x2[n3], y2[n3])
+
+    # Scan through the two.
+    nmatch = 0
     for n1 in range(nt1):
-        n3=0 # we only want the best matched triangle
+        n3 = 0  # we only want the best matched triangle
         for n2 in range(nt2):
-            diffR=np.power(RA[n1]-RB[n2],2)
-            if ( diffR < (tolRA[n1]+tolRB[n2]) ) and \
-                ( (np.power(CA[n1]-CB[n2],2)) < (tolCA[n1]+tolCB[n2]) ):
-                if ( RA[n1] < 10 ) and ( RB[n2] < 10):
-                    if n3==0:
-                        nmatch=nmatch+1
-                        n3=1
-    #print("nmatch",nmatch)
+            diffR = np.power(RA[n1]-RB[n2], 2)
+            if (diffR < (tolRA[n1]+tolRB[n2])) and ((np.power(CA[n1]-CB[n2], 2)) < (tolCA[n1]+tolCB[n2])):
+                if (RA[n1] < 10) and (RB[n2] < 10):
+                    if n3 == 0:
+                        nmatch = nmatch+1
+                        n3 = 1
 
-    #now we know the number of matches, so we preallocate and repeat
-    #this seems to be faster?!?
-    mA=np.zeros(nmatch,dtype=int) #Store indices at integers
-    mB=np.zeros(nmatch,dtype=int)
-    lmag=np.zeros(nmatch)
-    orcomp=np.zeros(nmatch,dtype=int)
+    # print("nmatch", nmatch)
 
-    #repeating the calculation from above.
-    #scan through the two lists and find matches.
-    nmatch=-1
-    diffRold=0
+    # Now we know the number of matches, so we preallocate and repeat.
+    # This seems to be faster?!?
+    mA = np.zeros(nmatch, dtype=int)  # Store indices at integers.
+    mB = np.zeros(nmatch, dtype=int)
+    lmag = np.zeros(nmatch)
+    orcomp = np.zeros(nmatch, dtype=int)
+
+    # Repeating the calculation from above.
+    # Scan through the two lists and find matches.
+    nmatch = -1
+    diffRold = 0
     for n1 in range(nt1):
-        n3=0 # we only want the best matched triangle
+        n3 = 0  # We only want the best matched triangle.
         for n2 in range(nt2):
-            diffR=np.power(RA[n1]-RB[n2],2)
-            if ( diffR < (tolRA[n1]+tolRB[n2]) ) and \
-                ( (np.power(CA[n1]-CB[n2],2)) < (tolCA[n1]+tolCB[n2]) ):
-                if ( RA[n1] < 10 ) and ( RB[n2] < 10):
-                    if n3==0:
-                        nmatch=nmatch+1
-                        n3=1
-                        mA[nmatch]=np.copy(n1)
-                        mB[nmatch]=np.copy(n2)
-                        lmag[nmatch]=lpA[n1]-lpB[n2]
-                        orcomp[nmatch]=orA[n1]*orB[n2]
-                        diffRold=np.copy(diffR)
+            diffR = np.power(RA[n1]-RB[n2], 2)
+            if (diffR < (tolRA[n1]+tolRB[n2])) and ((np.power(CA[n1]-CB[n2], 2)) < (tolCA[n1]+tolCB[n2])):
+                if (RA[n1] < 10) and (RB[n2] < 10):
+                    if n3 == 0:
+                        nmatch = nmatch+1
+                        n3 = 1
+                        mA[nmatch] = np.copy(n1)
+                        mB[nmatch] = np.copy(n2)
+                        lmag[nmatch] = lpA[n1]-lpB[n2]
+                        orcomp[nmatch] = orA[n1]*orB[n2]
+                        diffRold = np.copy(diffR)
                     else:
                         if diffR < diffRold:
-                            mA[nmatch]=np.copy(n1)
-                            mB[nmatch]=np.copy(n2)
-                            lmag[nmatch]=lpA[n1]-lpB[n2]
-                            orcomp[nmatch]=orA[n1]*orB[n2]
-                            diffRold=np.copy(diffR)
+                            mA[nmatch] = np.copy(n1)
+                            mB[nmatch] = np.copy(n2)
+                            lmag[nmatch] = lpA[n1]-lpB[n2]
+                            orcomp[nmatch] = orA[n1]*orB[n2]
+                            diffRold = np.copy(diffR)
 
-    #print(nmatch,mA[nmatch],mB[nmatch])
-    nmatchold=0;
-    nplus=0;nminus=0
-    while (nmatch != nmatchold):
-        nplus=np.sum(orcomp==1)
-        nminus=np.sum(orcomp==-1)
+    # print(nmatch, mA[nmatch], mB[nmatch])
 
-        mt=np.abs(nplus-nminus)
-        mf=nplus+nminus-mt
+    nmatchold = 0
+    nplus = 0
+    nminus = 0
+    while nmatch != nmatchold:
+        nplus = np.sum(orcomp == 1)
+        nminus = np.sum(orcomp == -1)
+
+        mt = np.abs(nplus-nminus)
+        mf = nplus+nminus-mt
         if mf > mt:
-            sigma=1
+            sigma = 1
         elif 0.1*mf > mf:
-            sigma=3
+            sigma = 3
         else:
-            sigma=2
-        meanmag=np.mean(lmag)
-        stdev=np.std(lmag)
+            sigma = 2
+        meanmag = np.mean(lmag)
+        stdev = np.std(lmag)
 
-        datacut=(lmag-meanmag <  sigma*stdev)
-        mA=mA[datacut]
-        mB=mB[datacut]
-        lmag=lmag[datacut]
-        orcomp=orcomp[datacut]
+        datacut = (lmag - meanmag < sigma*stdev)
+        mA = mA[datacut]
+        mB = mB[datacut]
+        lmag = lmag[datacut]
+        orcomp = orcomp[datacut]
 
-        nmatchold=np.copy(nmatch)
-        nmatch=len(mA)
+        nmatchold = np.copy(nmatch)
+        nmatch = len(mA)
 
     if nplus > nminus:
-        datacut=(orcomp==1)
+        datacut = (orcomp == 1)
     else:
-        datacut=(orcomp==-1)
+        datacut = (orcomp == -1)
 
-    mA=mA[datacut]
-    mB=mB[datacut]
-    lmag=lmag[datacut]
-    orcomp=orcomp[datacut]
-    nmatch=len(mA)
+    mA = mA[datacut]
+    mB = mB[datacut]
+    lmag = lmag[datacut]
+    orcomp = orcomp[datacut]
+    nmatch = len(mA)
 
-    n=np.max([nt1,nt2]) #max expected size
-    votearray=np.zeros([n,n],dtype=int)
+    n = np.max([nt1, nt2])  # Max expected size.
+    votearray = np.zeros([n, n], dtype=int)
 
     for n1 in range(nmatch):
-        votearray[tA1[mA[n1]],tB1[mB[n1]]]=votearray[tA1[mA[n1]],tB1[mB[n1]]]+1
-        votearray[tA2[mA[n1]],tB2[mB[n1]]]=votearray[tA2[mA[n1]],tB2[mB[n1]]]+1
-        votearray[tA3[mA[n1]],tB3[mB[n1]]]=votearray[tA3[mA[n1]],tB3[mB[n1]]]+1
+        votearray[tA1[mA[n1]], tB1[mB[n1]]] = votearray[tA1[mA[n1]], tB1[mB[n1]]] + 1  # Does += work in this case?
+        votearray[tA2[mA[n1]], tB2[mB[n1]]] = votearray[tA2[mA[n1]], tB2[mB[n1]]] + 1
+        votearray[tA3[mA[n1]], tB3[mB[n1]]] = votearray[tA3[mA[n1]], tB3[mB[n1]]] + 1
 
-    #print(votearray)
-    n2=votearray.shape[0]*votearray.shape[1]
-    votes=np.zeros([n2,3],dtype=int)
+    # print(votearray)
 
-    #cnt1=1
-    #cnt2=1
-    #for n1 in range(n2):
-    #    votes[n1,1]=np.copy(votearray.flatten('F')[n1])
-    #    votes[n1,2]=np.copy(cnt1)
-    #    votes[n1,3]=np.copy(cnt2)
-    #    cnt1=cnt1+1
-    #    if cnt1>n:
-    #        cnt1=1
-    #        cnt2=cnt2+1
+    n2 = votearray.shape[0]*votearray.shape[1]
+    votes = np.zeros([n2, 3], dtype=int)
 
-    i=-1
+    # cnt1 = 1
+    # cnt2 = 1
+    # for n1 in range(n2):
+    #     votes[n1, 1] = np.copy(votearray.flatten('F')[n1])
+    #     votes[n1, 2] = np.copy(cnt1)
+    #     votes[n1, 3] = np.copy(cnt2)
+    #     cnt1 = cnt1+1
+    #     if cnt1 > n:
+    #         cnt1 = 1
+    #         cnt2 = cnt2+1
+
+    i = -1
     for i1 in range(n):
         for i2 in range(n):
-            i=i+1
-            votes[i,0]=np.copy(votearray[i1,i2])
-            votes[i,1]=np.copy(i1)
-            votes[i,2]=np.copy(i2)
+            i = i+1
+            votes[i, 0] = np.copy(votearray[i1, i2])
+            votes[i, 1] = np.copy(i1)
+            votes[i, 2] = np.copy(i2)
 
-    votes=votes[np.argsort(votes[:,0])]
+    votes = votes[np.argsort(votes[:, 0])]
 
-    #pre-allocated arrays
-    matches=np.zeros([n,2],dtype=int)
-    matchedx=np.zeros(n,dtype=int) #make sure stars are not assigned twice.
-    matchedy=np.zeros(n,dtype=int)
+    # Pre-allocated arrays.
+    matches = np.zeros([n, 2], dtype=int)
+    matchedx = np.zeros(n, dtype=int)  # Make sure stars are not assigned twice.
+    matchedy = np.zeros(n, dtype=int)
 
-    n1=np.copy(n2)-1
-    #print("votes",votes[0,0])  # <--- this gives the maximum vote!
-    maxvote=votes[n1,0]
-    #print("votes",maxvote)
+    n1 = np.copy(n2)-1
+    # print("votes", votes[0, 0])  # <--- this gives the maximum vote!
+    maxvote = votes[n1, 0]
+    # print("votes", maxvote)
 
     if maxvote <= 1:
-        err=1
+        err = 1
         print('Matching Failed')
 
-    nm=-1
-    loop=1 #loop flag
-    while loop==1:
-        nm=nm+1 #count number of matches
-        #print(matchedx[votes[n1,1]],matchedy[votes[n1,2]])
-        if (matchedx[votes[n1,1]]>0) or (matchedy[votes[n1,2]]>0):
-            loop=0 #break from loop
-            nm=nm-1 #correct counter
+    nm = -1
+    loop = 1  # Loop flag.
+    while loop == 1:
+        nm = nm+1  # Count number of matches.
+        # print(matchedx[votes[n1, 1]], matchedy[votes[n1, 2]])
+        if (matchedx[votes[n1, 1]] > 0) or (matchedy[votes[n1, 2]] > 0):
+            loop = 0  # Break from loop. TODO use python break, elsewhere in loop as well
+            nm = nm-1  # Correct counter. TODO or only count after success?
         else:
-            matches[nm,0]=np.copy(votes[n1,1])
-            matches[nm,1]=np.copy(votes[n1,2])
-            matchedx[votes[n1,1]]=1
-            matchedy[votes[n1,2]]=1
-        #when number of votes falls below half of max, then exit
-        if votes[n1-1,0]/maxvote < 0.5:
-            loop=0
-        if votes[n1-1,0]==0:
-            loop=0 #no more votes left, so exit.
-        n1=n1-1 # decrease counter
-        if n1==0:
-            loop=0 #break fron loop
-        if nm>=n1-1:
-            loop=0 #everything should of been matched by now
+            matches[nm, 0] = np.copy(votes[n1, 1])
+            matches[nm, 1] = np.copy(votes[n1, 2])
+            matchedx[votes[n1, 1]] = 1
+            matchedy[votes[n1, 2]] = 1
 
-    nm=nm+1
-    
+        # When number of votes falls below half of max, then exit.
+        if votes[n1-1, 0]/maxvote < 0.5:
+            loop = 0
+        if votes[n1-1, 0] == 0:
+            loop = 0  # No more votes left, so exit.
+
+        n1 = n1-1  # Decrease counter.
+        if n1 == 0:
+            loop = 0  # Break fron loop.
+        if nm >= n1-1:
+            loop = 0  # Everything should of been matched by now.
+
+    nm = nm+1
+
     return err, nm, matches
 
 def orient(ax,ay,bx,by,cx,cy):
