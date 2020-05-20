@@ -1528,320 +1528,376 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
 
     return a
 
-#Determine phase offset for science image
-def funcphase(aoff,a,xn,yn,scidata_in,stdcut):
-    xoff=aoff[0]
-    yoff=aoff[1]
-    model=fourierd2d(a,xn,yn,xoff,yoff)
-    sqmeanabs=np.sqrt(np.mean(np.abs(scidata_in)))
-    if sqmeanabs>0:
-        diff = (scidata_in-model)/sqmeanabs
+
+def funcphase(aoff, a, xn, yn, scidata_in, stdcut):
+    """Determine phase offset for science image."""
+
+    xoff = aoff[0]
+    yoff = aoff[1]
+    model = fourierd2d(a, xn, yn, xoff, yoff)
+    sqmeanabs = np.sqrt(np.mean(np.abs(scidata_in)))
+
+    if sqmeanabs > 0:  # TODO how could this not be >0? Maybe not finite?
+        diff = (scidata_in - model)/sqmeanabs
     else:
-        diff = (scidata_in-model)
-    diffflat=diff.flatten()
-    diffflat[np.abs(diffflat)>stdcut]=0.0
-    return diffflat;
+        diff = (scidata_in - model)
 
-def funcphase_noflatten(aoff,a,xn,yn,scidata_in):
-    xoff=aoff[0]
-    yoff=aoff[1]
-    model=fourierd2d(a,xn,yn,xoff,yoff)
-    sqmeanabs=np.sqrt(np.mean(np.abs(scidata_in)))
-    if sqmeanabs>0:
-        diff = (scidata_in-model)/sqmeanabs
+    diffflat = diff.flatten()
+    diffflat[np.abs(diffflat) > stdcut] = 0.0
+
+    return diffflat
+
+
+def funcphase_noflatten(aoff, a, xn, yn, scidata_in):
+    """"""
+
+    xoff = aoff[0]
+    yoff = aoff[1]
+    model = fourierd2d(a, xn, yn, xoff, yoff)
+    sqmeanabs = np.sqrt(np.mean(np.abs(scidata_in)))
+
+    if sqmeanabs > 0:  # TODO how could this not be >0? Maybe not finite?
+        diff = (scidata_in - model)/sqmeanabs
     else:
-        diff = (scidata_in-model)
-    return diff;
+        diff = (scidata_in - model)
 
-#Apply Fourier correction from overscan
-def fouriercor(scidata_in,a):
-    aoff=np.array([0.0,0.0])
-    xn=scidata_in.shape[0]
-    yn=scidata_in.shape[1]
-    scidata_z=scidata_in-np.median(scidata_in)
-    stdcut=1.0e30
-    aph=opt.leastsq(funcphase,aoff,args=(a,xn,yn,scidata_z,stdcut),factor=1)
+    return diff
 
-    #Apply a sigma cut, to reduce the effect of stars in the image
-    aoff=np.array([aph[0][0],aph[0][1]])
-    diff=funcphase_noflatten(aoff,a,xn,yn,scidata_z)
-    stdcut=3.0*np.std(diff)
-    aph=opt.leastsq(funcphase,aoff,args=(a,xn,yn,scidata_z,stdcut),factor=1)
 
-    xoff=aph[0][0] #Apply offsets
-    yoff=aph[0][1]
-    model=fourierd2d(a,xn,yn,xoff,yoff)
-    scidata_cor=scidata_in-model
+def fouriercor(scidata_in, a):
+    """Apply Fourier correction from overscan."""
 
-    return scidata_cor;
+    aoff = np.array([0.0, 0.0])
+    xn = scidata_in.shape[0]
+    yn = scidata_in.shape[1]
+    scidata_z = scidata_in - np.median(scidata_in)
+    stdcut = 1.0e30
+    aph = opt.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
 
-def overscan_cor(scidata_c,overscan,a,bpix):
-    scidata_co=fouriercor(scidata_c,a)
-    #imstat=imagestat(scidata_co,bpix)
-    #plot_image(scidata_co,imstat,-0.2,3.0)
-    #print(imstat)
-    
-    #General Overscan correction
-    xn=overscan.shape[0]
-    yn=overscan.shape[1]
-    model=fourierd2d(a,xn,yn,0.0,0.0)
-    overscan_cor1=overscan-model
-    row_cor=[np.sum(overscan_cor1[i,:])/yn for i in range(xn)]
-    scidata_cor=np.copy(scidata_co)
+    # Apply a sigma cut, to reduce the effect of stars in the image.
+    aoff = np.array([aph[0][0], aph[0][1]])
+    diff = funcphase_noflatten(aoff, a, xn, yn, scidata_z)
+    stdcut = 3.0*np.std(diff)
+    aph = opt.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
+
+    xoff = aph[0][0]  # Apply offsets.
+    yoff = aph[0][1]
+    model = fourierd2d(a, xn, yn, xoff, yoff)
+    scidata_cor = scidata_in - model
+
+    return scidata_cor
+
+
+def overscan_cor(scidata_c, overscan, a, bpix):
+    """"""
+
+    scidata_co = fouriercor(scidata_c, a)
+    # imstat = imagestat(scidata_co, bpix)
+    # plot_image(scidata_co, imstat, -0.2, 3.0)
+    # print(imstat)
+
+    # General Overscan correction.
+    xn = overscan.shape[0]
+    yn = overscan.shape[1]
+    model = fourierd2d(a, xn, yn, 0.0, 0.0)
+    overscan_cor1 = overscan - model
+    row_cor = [np.sum(overscan_cor1[i, :])/yn for i in range(xn)]
+    scidata_cor = np.copy(scidata_co)
     for i in range(xn):
-        scidata_cor[i,:]=scidata_co[i,:]-row_cor[i]
-    #imstat=imagestat(scidata_cor,bpix)
-    #plot_image(scidata_cor,imstat,-0.2,3.0)
-    #print(imstat)
-    
-    return scidata_cor;
+        scidata_cor[i, :] = scidata_co[i, :] - row_cor[i]
+
+    # imstat = imagestat(scidata_cor, bpix)
+    # plot_image(scidata_cor, imstat, -0.2, 3.0)
+    # print(imstat)
+
+    return scidata_cor
 
 
-def darkcorrect(scidata,masterdark,bpix):
-    'Usage: m,c=darkcorrect(scidata,masterdark,pbix)'
-    masked_dark = np.ma.array(masterdark, mask=masterdark<bpix)
-    maxd=masked_dark.max()
-    mind=masked_dark.min()
-    
-    n1=scidata.shape[0]
-    n2=scidata.shape[1]
-    
-    x=[] #contains linear array of dark pixel values
-    y=[] #contains linear array of science pixel values
+def darkcorrect(scidata, masterdark, bpix):
+    """Usage: m, c = darkcorrect(scidata, masterdark, pbix)"""
+
+    masked_dark = np.ma.array(masterdark, mask=masterdark < bpix)
+    maxd = masked_dark.max()
+    mind = masked_dark.min()
+
+    n1 = scidata.shape[0]
+    n2 = scidata.shape[1]
+
+    # TODO I think this entire loop can go.
+    x = []  # Contains linear array of dark pixel values. TODO could do with more descriptive name.
+    y = []  # Contains linear array of science pixel values. TODO could do with more descriptive name.
     for i in range(n1):
         for j in range(n2):
-            if(scidata[i,j]>bpix and masterdark[i,j]>bpix and scidata[i,j] > mind and scidata[i,j] < maxd):
-                x.append(masterdark[i,j])
-                y.append(scidata[i,j])
-    x=np.array(x) #convert to numpy arrays
-    y=np.array(y)
-    
-    n_samples=len(x)
-    
-    # Ransac parameters
-    ransac_iterations = 20  # number of iterations
-    ransac_threshold = 3    # threshold
-    ransac_ratio = 0.6      # ratio of inliers required to assert
-                            # that a model fits well to data
-    
-    #data = np.hstack( (x,y) )
-    data=np.vstack((x, y)).T
+            # TODO not sure this evaluates correctly with the brackets as they are.
+            if (scidata[i, j] > bpix and masterdark[i, j] > bpix and scidata[i, j] > mind and scidata[i, j] < maxd):
+                x.append(masterdark[i, j])
+                y.append(scidata[i, j])
+
+    x = np.array(x)  # Convert to numpy arrays.
+    y = np.array(y)
+
+    n_samples = len(x)
+
+    # Ransac parameters.
+    ransac_iterations = 20  # Number of iterations.
+    ransac_threshold = 3  # Threshold.
+    ransac_ratio = 0.6  # Ratio of inliers required to assert that a model fits well to data.
+
+    # data = np.hstack((x, y))
+    data = np.vstack((x, y)).T
     ratio = 0.
     model_m = 0.
     model_c = 0.
-    
+
     for it in range(ransac_iterations):
-        # pick up two random points
+        # Pick up two random points.
         n = 2
- 
+
         all_indices = np.arange(x.shape[0])
         np.random.shuffle(all_indices)
-        
+
         indices_1 = all_indices[:n]
         indices_2 = all_indices[n:]
-        
-        maybe_points = data[indices_1,:]
-        test_points = data[indices_2,:]
-        
-        # find a line model for these points
+
+        maybe_points = data[indices_1, :]
+        test_points = data[indices_2, :]
+
+        # Find a line model for these points.
         m, c = find_line_model(maybe_points)
-    
+
         x_list = []
         y_list = []
         num = 0
-        
-        # find orthogonal lines to the model for all testing points
+
+        # Find orthogonal lines to the model for all testing points.
         for ind in range(test_points.shape[0]):
-        
-            x0 = test_points[ind,0]
-            y0 = test_points[ind,1]
-             
-            # find an intercept point of the model with a normal from point (x0,y0)
+
+            x0 = test_points[ind, 0]
+            y0 = test_points[ind, 1]
+
+            # Find an intercept point of the model with a normal from point (x0, y0).
             x1, y1 = find_intercept_point(m, c, x0, y0)
-             
-            # distance from point to the model
+
+            # Distance from point to the model.
             dist = math.sqrt((x1 - x0)**2 + (y1 - y0)**2)
-             
-            # check whether it's an inlier or not
+
+            # Check whether it's an inlier or not.
             if dist < ransac_threshold:
                 x_list.append(x0)
                 y_list.append(y0)
                 num += 1
-        
+
         x_inliers = np.array(x_list)
         y_inliers = np.array(y_list)
- 
-        # in case a new model is better - cache it
+
+        # In case a new model is better - cache it.
         if num/float(n_samples) > ratio:
             ratio = num/float(n_samples)
             model_m = m
             model_c = c
- 
-        #print ('  inlier ratio = ', num/float(n_samples))
-        #print ('  model_m = ', model_m)
-        #print ('  model_c = ', model_c)
- 
-        # plot the current step
-        #ransac_plot(it, x_noise,y_noise, m, c, False, x_inliers, y_inliers, maybe_points)
- 
-        # we are done in case we have enough inliers
+
+        # print ('  inlier ratio = ', num/float(n_samples))
+        # print ('  model_m = ', model_m)
+        # print ('  model_c = ', model_c)
+
+        # Plot the current step.
+        # ransac_plot(it, x_noise,y_noise, m, c, False, x_inliers, y_inliers, maybe_points)
+
+        # We are done in case we have enough inliers.
         if num > n_samples*ransac_ratio:
-            #print ('The model is found !')
+            # print ('The model is found !')
             break
-            
-    #print ('\nFinal model:\n')
-    #print ('  ratio = ', ratio)
-    #print ('  model_m = ', model_m)
-    #print ('  model_c = ', model_c)
-    
-    return model_m,model_c
 
-def imagestat(scidata,bpix):
+    # print ('\nFinal model:\n')
+    # print ('  ratio = ', ratio)
+    # print ('  model_m = ', model_m)
+    # print ('  model_c = ', model_c)
 
-    it=5 #number of iterations to chop out outliers
-    imstat=[]
+    return model_m, model_c
 
-    minp=np.min(scidata[scidata>bpix])
-    maxp=np.max(scidata[scidata>bpix])
-    mean=np.mean(scidata[scidata>bpix])
-    std=np.std(scidata[scidata>bpix])
-    median=np.median(scidata[scidata>bpix])
+
+def imagestat(scidata, bpix):
+    """"""
+
+    it = 5  # Number of iterations to chop out outliers. TODO should be optional argument.
+
+    mask = scidata > bpix
+    minp = np.min(scidata[mask])
+    maxp = np.max(scidata[mask])
+    mean = np.mean(scidata[mask])
+    std = np.std(scidata[mask])
+    median = np.median(scidata[mask])
 
     for i in range(it):
-        mean=np.mean(scidata[((scidata>bpix) & (np.abs(scidata-median)<3.0*std))])
-        std=np.std(scidata[(scidata>bpix) & (np.abs(scidata-median)<3.0*std)])
-        median=np.median(scidata[(scidata>bpix) & (np.abs(scidata-median)<3.0*std)])
 
-    imstat=np.array([minp,maxp,mean,std,median])
+        mask = (scidata > bpix) & (np.abs(scidata - median) < 3.0*std)
 
-    return imstat;
+        mean = np.mean(scidata[mask])
+        std = np.std(scidata[mask])
+        median = np.median(scidata[mask])
 
-def plot_histogram(scidata,imstat,sigscalel,sigscaleh):
-    matplotlib.rcParams.update({'font.size': 24}) #adjust font
-    plt.figure(figsize=(12,6)) #adjust size of figure
-    flat=scidata.flatten()
-    vmin=np.min(flat[flat > imstat[2]-imstat[3]*sigscalel])
-    vmax=np.max(flat[flat < imstat[2]+imstat[3]*sigscaleh])
-    image_hist = plt.hist(scidata.flatten(), 100, range=(vmin,vmax))
+    imstat = np.array([minp, maxp, mean, std, median])  # TODO change to dict, no need to remember positions.
+
+    return imstat
+
+
+def plot_histogram(scidata, imstat, sigscalel, sigscaleh):
+    """"""
+
+    matplotlib.rcParams.update({'font.size': 24})  # Adjust font.
+
+    flat = scidata.flatten()
+    vmin = np.min(flat[flat > imstat[2] - imstat[3]*sigscalel])
+    vmax = np.max(flat[flat < imstat[2] + imstat[3]*sigscaleh])
+
+    plt.figure(figsize=(12, 6))  # Adjust size of figure.
+    image_hist = plt.hist(scidata.flatten(), 100, range=(vmin, vmax))
     plt.xlabel('Image Counts (ADU)')
     plt.ylabel('Number Count')
     plt.show()
 
-def plot_image_wsource(scidata,imstat,sigscalel,sigscaleh,sources):
-    eps=1.0e-9
-    sigscalel=-np.abs(sigscalel) #Expected to be negative
-    sigscaleh= np.abs(sigscaleh) #Expected to be positive
-    matplotlib.rcParams.update({'font.size': 24}) #adjust font
-    plt.figure(figsize=(20,20)) #adjust size of figure
-    flat=scidata.flatten()
-    vmin=np.min(flat[flat > imstat[2]+imstat[3]*sigscalel])
-    vmax=np.max(flat[flat < imstat[2]+imstat[3]*sigscaleh])
+    return
+
+
+def plot_image_wsource(scidata, imstat, sigscalel, sigscaleh, sources):
+    """"""
+
+    eps = 1.0e-9
+    sigscalel = -np.abs(sigscalel)  # Expected to be negative.
+    sigscaleh = np.abs(sigscaleh)  # Expected to be positive.
+
+    matplotlib.rcParams.update({'font.size': 24})  # Adjust font.
+
+    flat = scidata.flatten()
+    vmin = np.min(flat[flat > imstat[2] + imstat[3]*sigscalel]) - imstat[0] + eps
+    vmax = np.max(flat[flat < imstat[2] + imstat[3]*sigscaleh]) - imstat[0] + eps
+
     positions = (sources['xcentroid'], sources['ycentroid'])
     apertures = CircularAperture(positions, r=4.)
-    imgplot = plt.imshow(scidata[:,:]-imstat[0],norm=LogNorm(),vmin=vmin-imstat[0]+eps, vmax=vmax-imstat[0]+eps)
+
+    plt.figure(figsize=(20, 20))  # Adjust size of figure.
+    imgplot = plt.imshow(scidata[:, :] - imstat[0], norm=LogNorm(), vmin=vmin, vmax=vmax)  # TODO scidata index?
     apertures.plot(color='red', lw=1.5, alpha=0.5)
-    plt.axis((0,scidata.shape[1],0,scidata.shape[0]))
+    plt.axis((0, scidata.shape[1], 0, scidata.shape[0]))
     plt.xlabel("Column (Pixels)")
     plt.ylabel("Row (Pixels)")
     plt.show()
 
-def plot_image(scidata,imstat,sigscalel,sigscaleh):
-    eps=1.0e-9
-    sigscalel=-np.abs(sigscalel) #Expected to be negative
-    sigscaleh= np.abs(sigscaleh) #Expected to be positive
-    matplotlib.rcParams.update({'font.size': 24}) #adjust font
-    plt.figure(figsize=(20,20)) #adjust size of figure
-    flat=scidata.flatten()
-    vmin=np.min(flat[flat > imstat[2]+imstat[3]*sigscalel])
-    vmax=np.max(flat[flat < imstat[2]+imstat[3]*sigscaleh])
-    imgplot = plt.imshow(scidata[:,:]-imstat[0],norm=LogNorm(),vmin=vmin-imstat[0]+eps, vmax=vmax-imstat[0]+eps)
-    plt.axis((0,scidata.shape[1],0,scidata.shape[0]))
+    return
+
+
+def plot_image(scidata, imstat, sigscalel, sigscaleh):
+    """"""
+
+    eps = 1.0e-9
+    sigscalel = -np.abs(sigscalel)  # Expected to be negative.
+    sigscaleh = np.abs(sigscaleh)  # Expected to be positive.
+
+    matplotlib.rcParams.update({'font.size': 24})  # Adjust font.
+
+    flat = scidata.flatten()
+    vmin = np.min(flat[flat > imstat[2] + imstat[3] * sigscalel]) - imstat[0] + eps
+    vmax = np.max(flat[flat < imstat[2] + imstat[3] * sigscaleh]) - imstat[0] + eps
+
+    plt.figure(figsize=(20, 20))  # Adjust size of figure.
+    imgplot = plt.imshow(scidata[:, :] - imstat[0], norm=LogNorm(), vmin=vmin, vmax=vmax)
+    plt.axis((0, scidata.shape[1], 0, scidata.shape[0]))
     plt.xlabel("Column (Pixels)")
     plt.ylabel("Row (Pixels)")
     plt.show()
 
-def columncor(scidata,bpix):
-    scidata_masked = np.ma.array(scidata, mask=scidata<bpix)
-    n1=scidata.shape[0]
-    n2=scidata.shape[1]
-    scidata_colcor=np.zeros((n1,n2))
+    return
+
+
+def columncor(scidata, bpix):
+    """"""
+
+    scidata_masked = np.ma.array(scidata, mask=scidata < bpix)
+    n1 = scidata.shape[0]
+    n2 = scidata.shape[1]
+    scidata_colcor = np.zeros((n1, n2))
     for i in range(n2):
-        med=np.ma.median(scidata_masked[:,i])
-        scidata_colcor[:,i]=scidata[:,i]-med   
-    return scidata_colcor;
+        med = np.ma.median(scidata_masked[:, i])
+        scidata_colcor[:, i] = scidata[:, i] - med
 
-def photo_centroid(scidata,bpix,starlist,ndp,dcoocon,itermax):
-    #scidata_masked = np.ma.array(scidata, mask=scidata<bpix)
-    starlist_cen=np.copy(starlist)
-    nstar=len(starlist)
-    
-    for i in range(nstar):
-        
-        xcoo=np.float(starlist[i][1]) #Get current centroid info and move into float
-        ycoo=np.float(starlist[i][0])
-        
-        dcoo=dcoocon+1
-        iter=0
-        
-        while(dcoo > dcoocon and iter < itermax):
-        
-            xcoo1=np.copy(xcoo) #make a copy of current position to evaluate change.
-            ycoo1=np.copy(ycoo)
-        
-            #update centroid
-            j1=int(xcoo)-ndp
-            j2=int(xcoo)+ndp
-            k1=int(ycoo)-ndp
-            k2=int(ycoo)+ndp
-            sumx=0.0
-            sumy=0.0
-            fsum=0.0
-            for j in range(j1,j2):
-                for k in range(k1,k2):
-                    sumx=sumx+scidata[j,k]*(j+1)
-                    sumy=sumy+scidata[j,k]*(k+1)
-                    fsum=fsum+scidata[j,k]
-                
-            xcoo=sumx/fsum
-            ycoo=sumy/fsum
-        
-            dxcoo=np.abs(xcoo-xcoo1)
-            dycoo=np.abs(ycoo-ycoo1)
-            dcoo=np.sqrt(dxcoo*dxcoo+dycoo*dycoo)
-            
-            xcoo1=np.copy(xcoo) #make a copy of current position to evaluate change.
-            ycoo1=np.copy(ycoo)
-            
-            iter=iter+1
-        
-            #print(dxcoo,dycoo,dcoo)
-        
-        starlist_cen[i][1]=xcoo
-        starlist_cen[i][0]=ycoo
-        
-    return starlist_cen;
+    return scidata_colcor
 
-def phot_simple(scidata,starlist,bpix,sbox,sky):
 
-    boxsum=[] #Store photometry in a list
+def photo_centroid(scidata, bpix, starlist, ndp, dcoocon, itermax):
+    """"""
 
-    masked_scidata = np.ma.array(scidata, mask=scidata<bpix) #mask out bad pixels
-
-    nstar=len(starlist) #number of stars
+    # scidata_masked = np.ma.array(scidata, mask=scidata < bpix)
+    starlist_cen = np.copy(starlist)
+    nstar = len(starlist)
 
     for i in range(nstar):
 
-        xcoo=np.float(starlist[i][1]) #position of star.
-        ycoo=np.float(starlist[i][0])
+        xcoo = np.float(starlist[i][1])  # Get current centroid info and move into float.
+        ycoo = np.float(starlist[i][0])
 
-        j1=int(xcoo)-sbox  #dimensions of photometric box
-        j2=int(xcoo)+sbox
-        k1=int(ycoo)-sbox
-        k2=int(ycoo)+sbox
+        dcoo = dcoocon + 1
+        niter = 0
 
-        bsum=np.sum(masked_scidata[j1:j2,k1:k2]) #total flux inside box
-        npix=np.sum(masked_scidata[j1:j2,k1:k2]/masked_scidata[j1:j2,k1:k2]) #number of pixels
+        while (dcoo > dcoocon and niter < itermax):  # TODO check how this evaluates.
 
-        boxsum.append(bsum-npix*sky) #sky corrected flux measurement
+            xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
+            ycoo1 = np.copy(ycoo)
+
+            # Update centroid.
+            j1 = int(xcoo) - ndp
+            j2 = int(xcoo) + ndp
+            k1 = int(ycoo) - ndp
+            k2 = int(ycoo) + ndp
+            sumx = 0.0
+            sumy = 0.0
+            fsum = 0.0
+            for j in range(j1, j2):  # TODO I think this can be done without the loops.
+                for k in range(k1, k2):
+                    sumx = sumx + scidata[j, k]*(j+1)
+                    sumy = sumy + scidata[j, k]*(k+1)
+                    fsum = fsum + scidata[j, k]
+
+            xcoo = sumx/fsum
+            ycoo = sumy/fsum
+
+            dxcoo = np.abs(xcoo - xcoo1)
+            dycoo = np.abs(ycoo - ycoo1)
+            dcoo = np.sqrt(dxcoo*dxcoo + dycoo*dycoo)
+
+            xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
+            ycoo1 = np.copy(ycoo)
+
+            niter = niter + 1
+
+            # print(dxcoo, dycoo, dcoo)
+
+        starlist_cen[i][1] = xcoo
+        starlist_cen[i][0] = ycoo
+
+    return starlist_cen
+
+
+def phot_simple(scidata, starlist, bpix, sbox, sky):
+
+    boxsum = []  # Store photometry in a list. TODO always initialize arrays when size is known.
+
+    masked_scidata = np.ma.array(scidata, mask=scidata < bpix)  # Mask out bad pixels.
+
+    nstar = len(starlist)  # Number of stars.
+
+    for i in range(nstar):
+
+        xcoo = np.float(starlist[i][1])  # Position of star.
+        ycoo = np.float(starlist[i][0])
+
+        j1 = int(xcoo) - sbox  # Dimensions of photometric box.
+        j2 = int(xcoo) + sbox
+        k1 = int(ycoo) - sbox
+        k2 = int(ycoo) + sbox
+
+        bsum = np.sum(masked_scidata[j1:j2, k1:k2])  # Total flux inside box.
+        npix = np.sum(masked_scidata[j1:j2, k1:k2]/masked_scidata[j1:j2, k1:k2])  # Number of pixels.
+
+        boxsum.append(bsum - npix*sky)  # Sky corrected flux measurement.
 
     return boxsum
