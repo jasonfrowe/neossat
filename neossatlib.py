@@ -1,22 +1,27 @@
-from astropy.io import fits #astropy modules for FITS IO
+import os.path
+import sys
+
+import math  # TODO I think numpy is preferred over math these days.
 import numpy as np
-import scipy.optimize as opt # For least-squares fits
+import scipy.optimize as opt  # For least-squares fits
 from scipy.fftpack import fft, fft2
 import scipy.spatial as spatial
-#import medfit  #Fortran backend for median fits
+import scipy.linalg.lapack as la  # For PCA analysis.
+
+# import medfit  #Fortran backend for median fits
+
+from astropy.io import fits  # Astropy modules for FITS IO
 from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder
 from photutils import CircularAperture
 from photutils import aperture_photometry
-import os.path
-import sys
-import math
+
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm #for better display of FITS images
-#for PCA analysis
-import scipy.linalg.lapack as la
-import re #to extract trim sections for FITS header
+from matplotlib.colors import LogNorm  # For better display of FITS images. TODO astropy has a Ascale function...
+
+
+import re  # To extract trim sections for FITS header.
 
 
 def combinedarks(alldarkdata,mind=0,maxd=8000,b1=100,m1=0.3,m2=1.3,tp=2000):
