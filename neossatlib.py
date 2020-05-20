@@ -24,172 +24,178 @@ from matplotlib.colors import LogNorm  # For better display of FITS images. TODO
 import re  # To extract trim sections for FITS header.
 
 
-def combinedarks(alldarkdata,mind=0,maxd=8000,b1=100,m1=0.3,m2=1.3,tp=2000):
+def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):
+    """
+    mind,maxd : range of data to consider when matching frames.  Keeping maxd relatively low avoids stars
+    [b1,m1,m2,tp] - initial guess for solution.
+    b1=y-intercept for first segment
+    m1=slope for first segment
+    m2=slope for second segment
+    tp=division point from first to second segment
+    """
 
-    #mind,maxd : range of data to consider when matching frames.  Keeping maxd relatively low avoids stars
-    # [b1,m1,m2,tp] - initial guess for solution.
-    #     b1=y-intercept for first segment
-    #     m1=slope for first segment
-    #     m2=slope for second segment
-    #     tp=division point from first to second segment
+    darkscaled = []
+    ndark = len(alldarkdata)
+    for i in range(1, ndark):
 
+        image1 = alldarkdata[i]
+        image2 = alldarkdata[0]
 
-    darkscaled=[]
-    ndark=len(alldarkdata)
-    for i in range(1,ndark):
+        data1 = image1.flatten()
+        data2 = image2.flatten()
 
-        image1=alldarkdata[i]
-        image2=alldarkdata[0]
+        mask = (data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)
+        if len(data1[mask]) > 10 and len(data2[mask]) > 10:
+            data1_bin, data2_bin, derr_bin = bindata(data1[mask], data2[mask], 50)
 
-        data1=image1.flatten()
-        data2=image2.flatten()
-
-        if len(data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]) > 10 and \
-              len(data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)]) > 10:
-            data1_bin,data2_bin,derr_bin=bindata(\
-                    data1[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],\
-                    data2[(data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)],50)
-
-            x0=[b1,m1,m2,tp]
-            ans=opt.least_squares(ls_seg_func,x0,args=[data1_bin,data2_bin,derr_bin])
-            newdark=seg_func(ans.x,image1)
-            newdark=newdark.reshape([image1.shape[0],image1.shape[1]])
+            x0 = [b1, m1, m2, tp]
+            ans = opt.least_squares(ls_seg_func, x0, args=[data1_bin, data2_bin, derr_bin])
+            newdark = seg_func(ans.x, image1)
+            newdark = newdark.reshape([image1.shape[0], image1.shape[1]])
             darkscaled.append(newdark)
-    darkscaled=np.array(darkscaled)
 
-    darkavg=np.median(darkscaled,axis=0)
+    darkscaled = np.array(darkscaled)
+    darkavg = np.median(darkscaled, axis=0)
 
-    return darkavg;
+    return darkavg
+
 
 def getimage_dim(filename):
+    """"""
 
-    hdulist = fits.open(filename)
+    header = fits.getheader(filename)
 
-    trimsec=hdulist[0].header['TRIMSEC']
-    trim=re.findall(r'\d+',trimsec)
+    trimsec = header['TRIMSEC']
+    trim = re.findall(r'\d+', trimsec)
 
-    btrimsec=hdulist[0].header['BIASSEC']
-    btrim=re.findall(r'\d+',btrimsec)
+    btrimsec = header['BIASSEC']
+    btrim = re.findall(r'\d+', btrimsec)
 
-    n=len(trim)
+    n = len(trim)
     for i in range(n):
-        trim[i]=int(trim[i])
-        btrim[i]=int(btrim[i])
+        trim[i] = int(trim[i])
+        btrim[i] = int(btrim[i])
 
-    xsc=int(trim[3])-int(trim[2])+1
-    ysc=int(trim[1])-int(trim[0])+1
-    xov=int(btrim[3])-int(btrim[2])+1 #I ignore the last few columns
-    yov=int(btrim[1])-int(btrim[0])-3
+    xsc = int(trim[3]) - int(trim[2]) + 1
+    ysc = int(trim[1]) - int(trim[0]) + 1
+    xov = int(btrim[3]) - int(btrim[2]) + 1  # I ignore the last few columns.
+    yov = int(btrim[1]) - int(btrim[0]) - 3
 
-    hdulist.close()
+    return trim, btrim, xsc, ysc, xov, yov
 
-    return trim,btrim,xsc,ysc,xov,yov
 
-def photprocess(filename,date,photap,bpix):
-    
-    scidata=read_fitsdata(filename)
-    
+def photprocess(filename, date, photap, bpix):
+    """"""
+
+    scidata = read_fitsdata(filename)
+
     mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
     daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
     sources = daofind(scidata - median)
-    
+
     positions = (sources['xcentroid'], sources['ycentroid'])
     apertures = CircularAperture(positions, r=photap)
-    phot_table = aperture_photometry(scidata-median, apertures)
-    
-    return [phot_table,date,mean,median,std,filename]
+    phot_table = aperture_photometry(scidata - median, apertures)
 
-def pca_photcor(phot1,pcavec,npca,icut3=-1):
+    return [phot_table, date, mean, median, std, filename]
 
-    npt=len(phot1)
-    if icut3==-1:
-        icut3=np.zeros(npt)
 
-    icut=cutoutliers(phot1)
-    icut2=sigclip(phot1,icut)
-    icut=icut+icut2+icut3
-    phot1=replaceoutlier(phot1,icut)
+def pca_photcor(phot1, pcavec, npca, icut3=-1):
+    """"""
 
-    median=np.median(phot1[icut==0])
-    #normalize flux
-    phot1=phot1/median
+    npt = len(phot1)
+    if icut3 == -1:
+        icut3 = np.zeros(npt)
 
-    pars=[]
-    pars.append(np.median(phot1))
+    icut = cutoutliers(phot1)
+    icut2 = sigclip(phot1, icut)
+    icut = icut + icut2 + icut3
+    phot1 = replaceoutlier(phot1, icut)
+
+    # Normalize flux.
+    median = np.median(phot1[icut == 0])
+    phot1 = phot1/median
+
+    pars = [np.median(phot1)]
     for i in range(npca):
         pars.append(0)
-    pars=np.array(pars)
-    #pars=np.array([np.median(phot1),0.0,0.0])
+    pars = np.array(pars)
 
-    #get PCA model
+    # Get PCA model.
     for i in range(3):
-        ans=opt.least_squares(pca_func,pars,args=[phot1,pcavec,icut])
+        ans = opt.least_squares(pca_func, pars, args=[phot1, pcavec, icut])
         print(ans.x)
-        corflux=phot1-pca_model(ans.x,pcavec)+1.0
-        icut2=cutoutliers(corflux)
-        icut=icut+icut2
+        corflux = phot1 - pca_model(ans.x, pcavec) + 1.0
+        icut2 = cutoutliers(corflux)
+        icut = icut + icut2
 
     return corflux, median, ans, icut
 
-def get_pcavec(photometry_jd,photometry,exptime,minflux=0,id_exclude=[-1]):
 
-    nspl=len(photometry_jd) #number of samples (time stamps)
-    npca=len(photometry[0]) #number of light curves
-    xpca=np.zeros([nspl,npca]) #work array for PCA
-    xpcac=np.zeros([nspl,npca]) #work array for PCA
-    m=np.zeros(npca)     #stores means
-    medianf=np.zeros(npca) #stores medians
-    badlist=[] #indices of photometry with NaNs
+def get_pcavec(photometry_jd, photometry, exptime, minflux=0, id_exclude=None):
+    """"""
 
-    ii=0
+    if id_exclude is None:
+        id_exclude = [-1]
+
+    nspl = len(photometry_jd)  # Number of samples (time stamps).
+    npca = len(photometry[0])  # Number of light curves.
+    xpca = np.zeros([nspl, npca])  # Work array for PCA.
+    xpcac = np.zeros([nspl, npca])  # Work array for PCA.
+    m = np.zeros(npca)  # Stores means.
+    medianf = np.zeros(npca)  # Stores medians.
+    badlist = []  # Indices of photometry with NaNs.
+
+    ii = 0
     for j in range(npca):
-        xpca[:,j]=[photometry[i][j]['aperture_sum']/exptime[i] for i in range(nspl)] #construct array
+        xpca[:, j] = [photometry[i][j]['aperture_sum']/exptime[i] for i in range(nspl)]  # Construct array.
 
-        if math.isnan(np.sum(xpca[:,j]))==False and all([j!=x for x in id_exclude]):  #Require valid data, purposely exclude AUMic
-            #deal with outliers
-            darray=np.array(xpca[:,j])
-            icut=cutoutliers(darray)
-            icut2=sigclip(darray,icut)
-            icut=icut+icut2
-            xpca[:,j]=replaceoutlier(darray,icut)
+        if math.isnan(np.sum(xpca[:, j])) == False and all([j != x for x in id_exclude]):  # Require valid data.
 
-            medianf[j]=np.median(xpca[:,j]) #median raw flux from star
+            # Deal with outliers.
+            darray = np.array(xpca[:, j])
+            icut = cutoutliers(darray)
+            icut2 = sigclip(darray, icut)
+            icut = icut + icut2
+            xpca[:, j] = replaceoutlier(darray, icut)
 
-            xpca[:,j]=xpca[:,j]/medianf[j] #divide by median
+            medianf[j] = np.median(xpca[:, j])  # Median raw flux from star.
 
-            m[j]=np.median(xpca[:,j]) #calculate median-centered data set
+            xpca[:, j] = xpca[:, j]/medianf[j]  # Divide by median.
 
-            #print(j,medianf[j],m[j])
+            m[j] = np.median(xpca[:, j])  # Calculate median-centered data set.
 
-            xpcac[:,j]=xpca[:,j]-m[j] #remove mean
+            # print(j, medianf[j], m[j])
+
+            xpcac[:, j] = xpca[:, j] - m[j]  # Remove mean.
             if medianf[j] > minflux:
-                ii=ii+1
+                ii = ii+1
         else:
             badlist.append(j)
 
-    xpcac_c=np.zeros([nspl,ii])
-    jj=-1
+    xpcac_c = np.zeros([nspl, ii])
+    jj = -1
     for j in range(npca):
         if medianf[j] > minflux:
-            jj=jj+1
-            xpcac_c[:,jj]=xpcac[:,j]
+            jj = jj+1
+            xpcac_c[:, jj] = xpcac[:, j]
 
-    print(nspl,ii)
+    print(nspl, ii)
 
-    #calculate co-variance matrix
-    C=np.zeros([ii,ii])
+    # Calculate the co-variance matrix.
+    cov = np.zeros([ii, ii])
     for i in range(ii):
         for j in range(ii):
-            var=np.sum(xpcac_c[:,i]*xpcac_c[:,j])/nspl
-            C[i,j]=var
+            var = np.sum(xpcac_c[:, i]*xpcac_c[:, j])/nspl
+            cov[i, j] = var
 
-    ans=la.dgeev(C)
-    vr=ans[3]
-    pcavec=np.matmul(xpcac_c,vr)
+    ans = la.dgeev(cov)
+    vr = ans[3]
+    pcavec = np.matmul(xpcac_c, vr)
     print("nbad", len(badlist))
     print("bad/exclude list:", badlist)
 
-    return pcavec;
+    return pcavec
 
 def get_master_phot4all(workdir,lightlist,jddate,transall,master_phot_table,photap,\
         bpix):
