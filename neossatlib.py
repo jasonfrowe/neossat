@@ -1432,7 +1432,7 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
     """"""
 
     # Count number of frequencies.
-    freq = 0
+    freqs = 0
 
     # Calculate Median of overscan region.
     med_overscan = np.median(overscan)
