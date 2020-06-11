@@ -1776,9 +1776,11 @@ def plot_image_wsource(scidata, imstat, sigscalel, sigscaleh, sources):
     apertures = CircularAperture(positions, r=4.)
 
     plt.figure(figsize=(20, 20))  # Adjust size of figure.
-    imgplot = plt.imshow(scidata[:, :] - imstat[0], norm=LogNorm(), vmin=vmin, vmax=vmax)  # TODO scidata index?
+    imgplot = plt.imshow(scidata - imstat[0], norm=LogNorm(), vmin=vmin, vmax=vmax)  # TODO scidata index?
     apertures.plot(color='red', lw=1.5, alpha=0.5)
-    plt.axis((0, scidata.shape[1], 0, scidata.shape[0]))
+    for i in range(len(positions)):
+        plt.annotate('{}'.format(i), positions[i])
+    plt.axis((-0.5, scidata.shape[1]-0.5, -0.5, scidata.shape[0]-0.5))
     plt.xlabel("Column (Pixels)")
     plt.ylabel("Row (Pixels)")
     plt.show()
