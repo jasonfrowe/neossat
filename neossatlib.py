@@ -93,7 +93,7 @@ def photprocess(filename, date, photap, bpix):
     daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
     sources = daofind(scidata - median)
 
-    positions = (sources['xcentroid'], sources['ycentroid'])
+    positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
     apertures = CircularAperture(positions, r=photap)
     phot_table = aperture_photometry(scidata - median, apertures)
 
@@ -229,7 +229,7 @@ def get_master_phot4all(workdir, lightlist, jddate, transall, master_phot_table,
             xnew = -transall[n2][0][0] + invmat[0][0]*x2 + invmat[0][1]*y2
             ynew = -transall[n2][0][1] + invmat[1][0]*x2 + invmat[1][1]*y2
 
-            positions_new = (xnew, ynew)
+            positions_new = np.column_stack([xnew, ynew])
             apertures_new = CircularAperture(positions_new, r=photap)
             phot_table_new = aperture_photometry(scidata - median, apertures_new)
 
@@ -1050,7 +1050,7 @@ def lightprocess(filename, date, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff
     daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
     sources = daofind(scidata_cord - median)
 
-    positions = (sources['xcentroid'], sources['ycentroid'])
+    positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
     apertures = CircularAperture(positions, r=photap)
     phot_table = aperture_photometry(scidata_cord-median, apertures)
 
@@ -1772,7 +1772,7 @@ def plot_image_wsource(scidata, imstat, sigscalel, sigscaleh, sources):
     vmin = np.min(flat[flat > imstat[2] + imstat[3]*sigscalel]) - imstat[0] + eps
     vmax = np.max(flat[flat < imstat[2] + imstat[3]*sigscaleh]) - imstat[0] + eps
 
-    positions = (sources['xcentroid'], sources['ycentroid'])
+    positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
     apertures = CircularAperture(positions, r=4.)
 
     plt.figure(figsize=(20, 20))  # Adjust size of figure.
