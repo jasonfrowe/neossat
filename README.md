@@ -1,12 +1,6 @@
-------------------------------------------------------------------------
-Source Code for CSA's NEOSSat Mission (Jason.Rowe@ubishops.ca)
-------------------------------------------------------------------------
+# Source Code for the CSA's NEOSSat Mission
 
---Update--
-To combine the medfit library:
-f2py3 -c utils/medfit.pyf utils/medfit.f90
-(the FORTRAN dependency will likely be removed soon, stay tuned!) 
-
+*Contact:* Jason.Rowe@ubishops.ca
 
 NEOSSat is a 15-cm optical space telescope capable of obtaining uninterupted time-series imaging of relatively bright stars.  The codes provided here enable corrections of instrumental effects, primarly dark current and tools for rudimentary extraction of aperature photometry.  
 
@@ -26,5 +20,5 @@ If you have any questions or concerns, please do not hestiate to reach out!  Cod
 Regards,
 Jason Rowe
 
-http://physics.ubishops.ca/exoplanets/index.html
+[Astronomy at Bishop's University](http://physics.ubishops.ca/exoplanets/index.html)
 
