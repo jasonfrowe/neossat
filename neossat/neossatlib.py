@@ -398,29 +398,6 @@ def meddiff(x):
     return dd_median
 
 
-def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
-    """"""
-
-    sortidx = np.argsort(f1)
-    maxf1 = f1[sortidx[np.max([len(f1)-n2m, 0])]]  # TODO use maximum instead of max.
-
-    sortidx = np.argsort(f2)
-    maxf2 = f2[sortidx[np.max([len(f2)-n2m, 0])]]  # TODO use maximum instead of max.
-
-    mask1 = f1 > maxf1
-    mask2 = f2 > maxf2
-
-    err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
-    if nm >= 3:
-        offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
-    else:
-        offset = np.array([0, 0])
-        rot = np.array([[0, 0],
-                        [0, 0]])
-
-    return offset, rot
-
-
 def match_points(current_points, prior_points, distance_cutoff):
     """
     Takes in an nxd input vector of d-dimensional Euclidean coordinates representing the current dataset
@@ -463,7 +440,7 @@ def match_points(current_points, prior_points, distance_cutoff):
     return matches
 
 
-def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):  # TODO function already exists and is the same?
+def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
     """"""
 
     sortidx = np.argsort(f1)
