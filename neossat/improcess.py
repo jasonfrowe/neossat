@@ -7,9 +7,11 @@ from scipy import optimize
 from scipy import fftpack
 
 from astropy.io import fits
+from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 
-from .neossatlib import read_fitsdata, bindata, imagestat, plot_image, sigma_clipped_stats  # TODO will likely change as we continue to split the code across files.
+from . import utils
+from .neossatlib import plot_image  # TODO will likely change as we continue to split the code across files.
 
 
 def columncor(scidata, bpix):
@@ -29,7 +31,7 @@ def columncor(scidata, bpix):
 def combine(imagefiles, ilow, ihigh, bpix):
     """Usage: masterimage = combine(imagefiles)"""
 
-    image1 = read_fitsdata(imagefiles[0])  # Read in first image.
+    image1 = utils.read_fitsdata(imagefiles[0])  # Read in first image.
     n1 = image1.shape[0]  # Get dimensions of image.
     n2 = image1.shape[1]
     nfile = len(imagefiles)  # Get number of expected images.
@@ -40,7 +42,7 @@ def combine(imagefiles, ilow, ihigh, bpix):
     for f in imagefiles:  # Loop over all files. TODO f unused loop over icount instead?
         icount += 1
         if icount > 1:  # Skip first image (already in array).
-            image1 = read_fitsdata(imagefiles[icount-1])  # Read in image.
+            image1 = utils.read_fitsdata(imagefiles[icount-1])  # Read in image.
             allfitsdata[icount-1, :, :] = image1  # Store image in array.
 
     for i in range(n1):
@@ -190,7 +192,7 @@ def darkprocess(workdir, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff,
     info = 0
 
     filename = os.path.join(workdir, darkfile)
-    scidata = read_fitsdata(filename)
+    scidata = utils.read_fitsdata(filename)
 
     # Crop Science Image.
     sh = scidata.shape
@@ -240,7 +242,7 @@ def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000
 
         mask = (data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)
         if len(data1[mask]) > 10 and len(data2[mask]) > 10:
-            data1_bin, data2_bin, derr_bin = bindata(data1[mask], data2[mask], 50)
+            data1_bin, data2_bin, derr_bin = utils.bindata(data1[mask], data2[mask], 50)
 
             x0 = [b1, m1, m2, tp]
             ans = optimize.least_squares(ls_seg_func, x0, args=[data1_bin, data2_bin, derr_bin])
@@ -476,7 +478,7 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO 
 
         if info >= 2:
             # Plot the FFT.
-            imstat = imagestat(ftoverscan_abs, bpix)
+            imstat = utils.imagestat(ftoverscan_abs, bpix)
             plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn, :T*yn//2])), imstat, 0.0, 10.0)
 
         mean_ftoverscan_abs = np.mean(ftoverscan_abs[:T*xn, :T*yn//2])
@@ -541,7 +543,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
 
     cor = 0  # Updates from Hamza. TODO cor and dark are used as bool, use true and false.
     dark = 0
-    scidata = read_fitsdata(filename)
+    scidata = utils.read_fitsdata(filename)
     scidata_cor = None
     scidata_cord = None
 
@@ -583,7 +585,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         overscan = overscan+mean  # Add mean back to overscan (this is the BIAS).
 
         if info >= 2:
-            imstat = imagestat(overscan, bpix)
+            imstat = utils.imagestat(overscan, bpix)
             plot_image(np.transpose(overscan), imstat, 0.3, 3.0)
 
         # Fourier Decomp of overscan.
@@ -593,7 +595,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
             xn = overscan.shape[0]
             yn = overscan.shape[1]
             model = fourierd2d(a, xn, yn, xoff, yoff)
-            imstat = imagestat(overscan-model, bpix)
+            imstat = utils.imagestat(overscan-model, bpix)
             plot_image(np.transpose(overscan-model), imstat, 0.3, 3.0)
 
         # Apply overscan correction to science raster
@@ -631,7 +633,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         mind = 0
         maxd = 8000
         mask = (data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)
-        data1_bin, data2_bin, derr_bin = bindata(data1[mask], data2[mask], 50)
+        data1_bin, data2_bin, derr_bin = utils.bindata(data1[mask], data2[mask], 50)
 
         b1 = 100
         m1 = 0.3
