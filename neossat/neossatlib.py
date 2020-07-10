@@ -1,5 +1,6 @@
 import os.path
 import sys
+import glob
 
 import math  # TODO I think numpy is preferred over math these days.
 import numpy as np
@@ -12,6 +13,7 @@ import scipy.linalg.lapack as la  # For PCA analysis.
 
 from astropy.io import fits  # Astropy modules for FITS IO
 from astropy.stats import sigma_clipped_stats
+from astropy.table import Table
 from photutils import DAOStarFinder
 from photutils import CircularAperture
 from photutils import aperture_photometry
@@ -22,6 +24,79 @@ from matplotlib.colors import LogNorm  # For better display of FITS images. TODO
 
 
 import re  # To extract trim sections for FITS header.
+
+
+def observation_table(obspath, header_keys=None):
+    """ Given a directory containing NEOSSat observations create a table of the observations. """
+
+    # List of mandatory header keys.
+    columns = ['OBJECT', 'SHUTTER', 'MODE', 'JD-OBS', 'EXPOSURE']
+
+    # Combine the mandaory and requested header keys.
+    if header_keys is not None:
+        columns = columns + list(header_keys)
+        columns = list(set(columns))  # Removes potential duplicates.
+
+    # Get a list of all fits files in the specified directory.
+    filelist = glob.glob(os.path.join(obspath, '*.fits'))
+
+    # Read all the headers TODO protect against corrupted files.
+    headers = []
+    nfiles = len(filelist)
+    trim = np.zeros((nfiles, 4), dtype=int)
+    btrim = np.zeros((nfiles, 4), dtype=int)
+    xsc = np.zeros(nfiles, dtype=int)
+    ysc = np.zeros(nfiles, dtype=int)
+    xov = np.zeros(nfiles, dtype=int)
+    yov = np.zeros(nfiles, dtype=int)
+    for i, filename in enumerate(filelist):
+        header = fits.getheader(filename)
+        headers.append(header)
+        trim[i], btrim[i], xsc[i], ysc[i], xov[i], yov[i] = getimage_dim(filename)
+
+    # Create the table and add the filenames.
+    obs_table = Table()
+    obs_table['FILENAME'] = [os.path.split(filename)[1] for filename in filelist]
+
+    # Add the mandatory and requested header keys. TODO check keys exist.
+    for col in columns:
+        obs_table[col] = [header[col] for header in headers]
+
+    obs_table['trim'] = trim
+    obs_table['btrim'] = btrim
+    obs_table['xsc'] = xsc
+    obs_table['ysc'] = ysc
+    obs_table['xov'] = xov
+    obs_table['yov'] = yov
+    obs_table['mode'] = [int(header['MODE'][:2]) for header in headers]
+    obs_table['shutter'] = [int(header['SHUTTER'][0]) for header in headers]
+
+    # Sort the table by observaion date.
+    obs_table['JD-OBS'] = obs_table['JD-OBS'].astype(float)
+    obs_table.sort('JD-OBS')
+
+    return obs_table
+
+
+def parse_observation_table(obs_table, target):
+    """ Split a table of observations into observations of a specific object and corresponding darks"""
+
+    mask = (obs_table['OBJECT'] == target) & (obs_table['shutter'] == 0) & \
+           ((obs_table['mode'] == 16) | (obs_table['mode'] == 13))
+    if not np.any(mask):
+        raise ValueError('Table does not contain observations of ' + target)
+
+    light_table = obs_table[mask]
+    xsc, ysc = light_table[0]['xsc'], light_table[0]['ysc']
+
+    mask = (obs_table['OBJECT'] == 'DARK') & (obs_table['shutter'] == 1) & \
+           (obs_table['xsc'] == xsc) & (obs_table['ysc'] == ysc)
+    if not np.any(mask):
+        raise ValueError('No appropriate darks found for observations of ' + target)
+
+    dark_table = obs_table[mask]
+
+    return light_table, dark_table
 
 
 def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):
