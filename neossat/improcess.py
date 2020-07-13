@@ -11,7 +11,7 @@ from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 
 from . import utils
-from .neossatlib import plot_image  # TODO will likely change as we continue to split the code across files.
+from . import visualize  # TODO will likely change as we continue to split the code across files.
 
 
 def columncor(scidata, bpix):
@@ -479,7 +479,7 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO 
         if info >= 2:
             # Plot the FFT.
             imstat = utils.imagestat(ftoverscan_abs, bpix)
-            plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn, :T*yn//2])), imstat, 0.0, 10.0)
+            visualize.plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn, :T*yn//2])), imstat, 0.0, 10.0)
 
         mean_ftoverscan_abs = np.mean(ftoverscan_abs[:T*xn, :T*yn//2])
         std_ftoverscan_abs = np.std(ftoverscan_abs[:T*xn, :T*yn//2])
@@ -586,7 +586,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
 
         if info >= 2:
             imstat = utils.imagestat(overscan, bpix)
-            plot_image(np.transpose(overscan), imstat, 0.3, 3.0)
+            visualize.plot_image(np.transpose(overscan), imstat, 0.3, 3.0)
 
         # Fourier Decomp of overscan.
         a = fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=info)
@@ -596,7 +596,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
             yn = overscan.shape[1]
             model = fourierd2d(a, xn, yn, xoff, yoff)
             imstat = utils.imagestat(overscan-model, bpix)
-            plot_image(np.transpose(overscan-model), imstat, 0.3, 3.0)
+            visualize.plot_image(np.transpose(overscan-model), imstat, 0.3, 3.0)
 
         # Apply overscan correction to science raster
         scidata_cor = overscan_cor(scidata_c, overscan, a, bpix)

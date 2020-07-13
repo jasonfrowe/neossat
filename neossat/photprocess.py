@@ -2,16 +2,12 @@ import os.path
 
 import math  # TODO I think numpy is preferred over math these days.
 import numpy as np
-import scipy.optimize as opt  # For least-squares fits
-import scipy.spatial as spatial
-import scipy.linalg.lapack as la  # For PCA analysis.
-
-# import medfit  #Fortran backend for median fits
+from scipy import optimize
+from scipy import spatial
+from scipy.linalg import lapack
 
 from astropy.stats import sigma_clipped_stats
-from photutils import DAOStarFinder
-from photutils import CircularAperture
-from photutils import aperture_photometry
+from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 
 from . import utils
 
@@ -55,7 +51,7 @@ def pca_photcor(phot1, pcavec, npca, icut3=-1):
 
     # Get PCA model.
     for i in range(3):
-        ans = opt.least_squares(pca_func, pars, args=[phot1, pcavec, icut])
+        ans = optimize.least_squares(pca_func, pars, args=[phot1, pcavec, icut])
         print(ans.x)
         corflux = phot1 - pca_model(ans.x, pcavec) + 1.0
         icut2 = utils.cutoutliers(corflux)
@@ -121,7 +117,7 @@ def get_pcavec(photometry_jd, photometry, exptime, minflux=0, id_exclude=None):
             var = np.sum(xpcac_c[:, i]*xpcac_c[:, j])/nspl
             cov[i, j] = var
 
-    ans = la.dgeev(cov)
+    ans = lapack.dgeev(cov)
     vr = ans[3]
     pcavec = np.matmul(xpcac_c, vr)
     print("nbad", len(badlist))
