@@ -1,7 +1,8 @@
 import os
 import sys
+import multiprocessing as mp
 
-import math
+import tqdm
 import numpy as np
 from scipy import optimize
 from scipy import fftpack
@@ -11,19 +12,15 @@ from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 
 from . import utils
-from . import visualize  # TODO will likely change as we continue to split the code across files.
+from . import visualize
 
 
 def columncor(scidata, bpix):
     """"""
 
     scidata_masked = np.ma.array(scidata, mask=scidata < bpix)
-    n1 = scidata.shape[0]
-    n2 = scidata.shape[1]
-    scidata_colcor = np.zeros((n1, n2))
-    for i in range(n2):
-        med = np.ma.median(scidata_masked[:, i])
-        scidata_colcor[:, i] = scidata[:, i] - med
+    med = np.ma.median(scidata_masked, axis=0)
+    scidata_colcor = scidata - med
 
     return scidata_colcor
 
@@ -31,25 +28,32 @@ def columncor(scidata, bpix):
 def combine(imagefiles, ilow, ihigh, bpix):
     """Usage: masterimage = combine(imagefiles)"""
 
-    image1 = utils.read_fitsdata(imagefiles[0])  # Read in first image.
-    n1 = image1.shape[0]  # Get dimensions of image.
-    n2 = image1.shape[1]
-    nfile = len(imagefiles)  # Get number of expected images.
-    allfitsdata = np.zeros((nfile, n1, n2))  # Allocate array to read in all FITS images.
-    masterimage = np.zeros((n1, n2))  # Allocate array for combined image.
-    allfitsdata[0, :, :] = image1  # Store first image in array.
-    icount = 0
-    for f in imagefiles:  # Loop over all files. TODO f unused loop over icount instead?
-        icount += 1
-        if icount > 1:  # Skip first image (already in array).
-            image1 = utils.read_fitsdata(imagefiles[icount-1])  # Read in image.
-            allfitsdata[icount-1, :, :] = image1  # Store image in array.
+    # Read in first image.
+    image1 = utils.read_fitsdata(imagefiles[0])
+
+    # Get the number of images and the image dimensions.
+    nfiles = len(imagefiles)
+    n1, n2 = image1.shape
+
+    # Allocate the necessary arrays.
+    masterimage = np.zeros((n1, n2))
+    allfitsdata = np.zeros((nfiles, n1, n2))
+
+    # Store first image in array.
+    allfitsdata[0, :, :] = image1
+
+    # Loop over the remaining images.
+    for icount, filename in enumerate(imagefiles):
+
+        # Skip first image (already in array).
+        if icount > 0:
+            allfitsdata[icount, :, :] = utils.read_fitsdata(filename)
 
     for i in range(n1):
         for j in range(n2):
             pixels = []
-            for k in range(nfile):
-                if allfitsdata[k, i, j] > bpix:  # Exclude bad-pixels. TODO what is the format of badpix, a bool?
+            for k in range(nfiles):
+                if allfitsdata[k, i, j] > bpix:  # Exclude bad-pixels.
                     pixels.append(allfitsdata[k, i, j])
             pixels = np.array(pixels)
             npixels = len(pixels)
@@ -75,34 +79,32 @@ def combine(imagefiles, ilow, ihigh, bpix):
     return masterimage
 
 
-def fourierd2d_v1(a, xn, yn, xoff, yoff):
-    """"""
-
-    tpi = 2.0*np.pi
-    m = np.ones([int(xn), int(yn)])*a[0]  # Zero point.
-    n = len(a)  # Number of parameters in model.
-    for i in range(xn):
-        for j in range(yn):
-            for k in range(1, n, 4):
-                m[i, j] = m[i, j] + a[k]*np.sin(tpi*(a[k+1]*(i - xoff) + a[k+2]*(j - yoff)) + a[k+3])
-
-    return m
-
-
 def fourierd2d(a, xn, yn, xoff, yoff):
     """"""
 
-    tpi = 2.0*np.pi
-    m = np.ones([int(xn)*int(yn)])*a[0]  # Zero point.
     n = len(a)  # Number of parameters in model.
-    for k in range(1, n, 4):  # TODO can these loops be replaced with np.meshgrid or similar?
-        m += [a[k]*np.sin(tpi*(a[k+1]*(i - xoff) + a[k+2]*(j - yoff)) + a[k+3]) for i in range(xn) for j in range(yn)]
-    m = np.reshape(m, (xn, yn))
+    tpi = 2.0*np.pi
+    m = a[0]*np.ones([int(xn), int(yn)])  # Zero point.
+    xx, yy = np.indices((xn, yn))
+    for k in range(1, n, 4):
+        m += a[k]*np.sin(tpi*(a[k+1]*(xx - xoff) + a[k+2]*(yy - yoff)) + a[k+3])
 
     return m
 
 
-def funcphase(aoff, a, xn, yn, scidata_in, stdcut):
+def func(a, xn, yn, xoff, yoff, overscan):  # TODO more descriptive function name.
+    """"""
+
+    model = fourierd2d(a, xn, yn, xoff, yoff)
+    sqmeanabs = np.sqrt(np.mean(np.abs(overscan)))
+
+    diff = (overscan - model)/sqmeanabs
+    diffflat = diff.flatten()
+
+    return diffflat
+
+
+def funcphase(aoff, a, xn, yn, scidata_in, stdcut=None):
     """Determine phase offset for science image."""
 
     xoff = aoff[0]
@@ -115,24 +117,12 @@ def funcphase(aoff, a, xn, yn, scidata_in, stdcut):
     else:
         diff = (scidata_in - model)
 
-    diffflat = diff.flatten()
-    diffflat[np.abs(diffflat) > stdcut] = 0.0
+    if stdcut is not None:
 
-    return diffflat
+        diffflat = diff.flatten()
+        diffflat[np.abs(diffflat) > stdcut] = 0.0
 
-
-def funcphase_noflatten(aoff, a, xn, yn, scidata_in):
-    """"""
-
-    xoff = aoff[0]
-    yoff = aoff[1]
-    model = fourierd2d(a, xn, yn, xoff, yoff)
-    sqmeanabs = np.sqrt(np.mean(np.abs(scidata_in)))
-
-    if sqmeanabs > 0:  # TODO how could this not be >0? Maybe not finite?
-        diff = (scidata_in - model)/sqmeanabs
-    else:
-        diff = (scidata_in - model)
+        return diffflat
 
     return diff
 
@@ -149,7 +139,7 @@ def fouriercor(scidata_in, a):
 
     # Apply a sigma cut, to reduce the effect of stars in the image.
     aoff = np.array([aph[0][0], aph[0][1]])
-    diff = funcphase_noflatten(aoff, a, xn, yn, scidata_z)
+    diff = funcphase(aoff, a, xn, yn, scidata_z)
     stdcut = 3.0*np.std(diff)
     aph = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
 
@@ -165,23 +155,18 @@ def overscan_cor(scidata_c, overscan, a, bpix):
     """"""
 
     scidata_co = fouriercor(scidata_c, a)
-    # imstat = imagestat(scidata_co, bpix)
-    # plot_image(scidata_co, imstat, -0.2, 3.0)
-    # print(imstat)
 
     # General Overscan correction.
     xn = overscan.shape[0]
     yn = overscan.shape[1]
     model = fourierd2d(a, xn, yn, 0.0, 0.0)
     overscan_cor1 = overscan - model
-    row_cor = [np.sum(overscan_cor1[i, :])/yn for i in range(xn)]
-    scidata_cor = np.copy(scidata_co)
-    for i in range(xn):
-        scidata_cor[i, :] = scidata_co[i, :] - row_cor[i]
 
-    # imstat = imagestat(scidata_cor, bpix)
-    # plot_image(scidata_cor, imstat, -0.2, 3.0)
-    # print(imstat)
+#    row_cor = np.mean(overscan_cor1, axis=1, keepdims=True)
+#    scidata_cor = scidata_co - row_cor
+
+    row_cor, _, _ = sigma_clipped_stats(overscan_cor1, axis=1)
+    scidata_cor = scidata_co - row_cor[:, np.newaxis]
 
     return scidata_cor
 
@@ -196,20 +181,17 @@ def darkprocess(workdir, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff,
 
     # Crop Science Image.
     sh = scidata.shape
-    strim = np.array([sh[0]-xsc, sh[0], sh[1]-ysc, sh[1]])
+    strim = np.array([sh[0] - xsc, sh[0], sh[1] - ysc, sh[1]])
     scidata_c = np.copy(scidata[strim[0]:strim[1], strim[2]:strim[3]])
 
     # Crop Overscan.
     sh = scidata.shape
-    otrim = np.array([sh[0]-xov, sh[0], 0, yov])
+    otrim = np.array([sh[0] - xov, sh[0], 0, yov])
     overscan = np.copy(scidata[otrim[0]:otrim[1], otrim[2]:otrim[3]])
-    mean = 0.0
-    for i in range(yov):
-        med = np.median(overscan[:, i])
-        overscan[:, i] = overscan[:, i]-med
-        mean = mean+med
-    mean = mean/yov
-    overscan = overscan+mean  # Add mean back to overscan (this is the BIAS).
+    med = np.median(overscan, axis=0)
+    overscan = overscan - med
+    mean = np.mean(med)
+    overscan = overscan + mean  # Add mean back to overscan (this is the BIAS).
 
     # Fourier Decomp of overscan.
     a = fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=info)
@@ -296,21 +278,10 @@ def darkcorrect(scidata, masterdark, bpix):
     maxd = masked_dark.max()
     mind = masked_dark.min()
 
-    n1 = scidata.shape[0]
-    n2 = scidata.shape[1]
+    mask = (scidata > bpix) & (masterdark > bpix) & (scidata > mind) & (scidata < maxd)
 
-    # TODO I think this entire loop can go.
-    x = []  # Contains linear array of dark pixel values. TODO could do with more descriptive name.
-    y = []  # Contains linear array of science pixel values. TODO could do with more descriptive name.
-    for i in range(n1):
-        for j in range(n2):
-            # TODO not sure this evaluates correctly with the brackets as they are.
-            if (scidata[i, j] > bpix and masterdark[i, j] > bpix and scidata[i, j] > mind and scidata[i, j] < maxd):
-                x.append(masterdark[i, j])
-                y.append(scidata[i, j])
-
-    x = np.array(x)  # Convert to numpy arrays.
-    y = np.array(y)
+    x = masterdark[mask]
+    y = scidata[mask]
 
     n_samples = len(x)
 
@@ -355,7 +326,7 @@ def darkcorrect(scidata, masterdark, bpix):
             x1, y1 = find_intercept_point(m, c, x0, y0)
 
             # Distance from point to the model.
-            dist = math.sqrt((x1 - x0)**2 + (y1 - y0)**2)
+            dist = np.sqrt((x1 - x0)**2 + (y1 - y0)**2)
 
             # Check whether it's an inlier or not.
             if dist < ransac_threshold:
@@ -401,16 +372,10 @@ def seg_func(x0, data):
     tp = x0[3]
     # print(x0)
 
-    b2 = m1*tp + b1-m2*tp
+    b2 = m1*tp + b1 - m2*tp
 
-    ans = []  # TODO Can be done in 1 line with np.where.
-    for x in data.flatten():
-        if x < tp:
-            y = m1*x + b1
-        else:
-            y = m2*x + b2
-        ans.append(y)
-    ans = np.array(ans)
+    ans = np.where(data < tp, m1 * data + b1, m2 * data + b2)
+    ans = ans.flatten()
 
     return ans
 
@@ -425,23 +390,11 @@ def ls_seg_func(x0, data1, data2, derr):
     return diff
 
 
-def func(a, xn, yn, xoff, yoff, overscan):  # TODO more descriptive function name.
-    """"""
-
-    model = fourierd2d(a, xn, yn, xoff, yoff)
-    sqmeanabs = np.sqrt(np.mean(np.abs(overscan)))
-    # diff = np.power(overscan - model, 2)/sqmeanabs
-    diff = (overscan - model)/sqmeanabs
-    diffflat = diff.flatten()
-
-    return diffflat
-
-
-def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO this is a likely bottlneck, see if it can be refactored.
+def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
     """"""
 
     # Count number of frequencies.
-    freqs = 0
+    nfreqs = 0
 
     # Calculate Median of overscan region.
     med_overscan = np.median(overscan)
@@ -465,11 +418,11 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO 
     yf = np.linspace(0.0, 1.0/2.0, T*yn//2)
 
     if fmax > 0:
-        loop = 0  # TODO loop is used as a boo,use True/False.
+        loop = True
     else:
-        loop = 1
+        loop = False
 
-    while loop == 0:
+    while loop:
 
         # Remove median, model and then calculate FFT.
         overscan_os[:xn, :yn] = overscan - med_overscan - model
@@ -481,27 +434,24 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO 
             imstat = utils.imagestat(ftoverscan_abs, bpix)
             visualize.plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn, :T*yn//2])), imstat, 0.0, 10.0)
 
-        mean_ftoverscan_abs = np.mean(ftoverscan_abs[:T*xn, :T*yn//2])
-        std_ftoverscan_abs = np.std(ftoverscan_abs[:T*xn, :T*yn//2])
+        mean_ftoverscan_abs = np.mean(ftoverscan_abs[T*1:T*xn, T*1:T*yn//2])
+        std_ftoverscan_abs = np.std(ftoverscan_abs[T*1:T*xn, T*1:T*yn//2])
         if info >= 1:
             print('mean, std:', mean_ftoverscan_abs, std_ftoverscan_abs)
 
         # Locate Frequency with largest amplitude.
-        maxamp = np.min(ftoverscan_abs[:T*xn, :T*yn//2])
-        for i in range(T*1, T*xn):
-            for j in range(T*1, T*yn//2):
-                if ftoverscan_abs[i, j] > maxamp:
-                    maxamp = ftoverscan_abs[i, j]
-                    maxi = i
-                    maxj = j
+        max_array = ftoverscan_abs[T*1:T*xn, T*1:T*yn//2]
+        maxi, maxj = np.unravel_index(np.argmax(max_array), max_array.shape)
+        maxi += T*1
+        maxj += T*1
 
         snr = (ftoverscan_abs[maxi, maxj] - mean_ftoverscan_abs)/std_ftoverscan_abs
         if info >= 1:
             print('SNR,i,j,amp: ', snr, maxi, maxj, ftoverscan_abs[maxi, maxj])
             # print(ftoverscan_abs[maxi, maxj], xf[maxi], yf[maxj], np.angle(ftoverscan[maxi, maxj]))
 
-        if (snr > snrcut) and (freqs < fmax):
-            freqs = freqs+1
+        if (snr > snrcut) and (nfreqs < fmax):
+            nfreqs += 1
             a = np.append(a, [ftoverscan_abs[maxi, maxj], xf[maxi], yf[maxj], np.angle(ftoverscan[maxi, maxj])+np.pi/2])
             # a1 = np.array([ftoverscan_abs[maxi, maxj], xf[maxi], yf[maxj], np.angle(ftoverscan[maxi, maxj])-np.pi/2])
             # a1 = np.append(0.0, a1)
@@ -521,7 +471,7 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO 
                 print("--------------")
 
         else:
-            loop = 1
+            loop = False
             # Remove median, model and then calculate FFT.
             # overscan_os[:xn, :yn] = overscan - med_overscan - model
             # ftoverscan = fft2(overscan_os)
@@ -541,8 +491,8 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO 
 def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, info, bpix):
     """"""
 
-    cor = 0  # Updates from Hamza. TODO cor and dark are used as bool, use true and false.
-    dark = 0
+    cor = False  # Updates from Hamza.
+    dark = False
     scidata = utils.read_fitsdata(filename)
     scidata_cor = None
     scidata_cord = None
@@ -556,15 +506,15 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
     hdul.close()
     # Set flags of what needs to be performed.
     if not NAXIS1 == xsc or not NAXIS2 == ysc:
-        cor = 1
+        cor = True
     if len(darkavg) != 0:
-        dark = 1
+        dark = True
 
     # If we only need to perform dark correction then set the scidata_cor to scidata.
-    if cor == 0 and dark == 1:
+    if not cor and dark:
         scidata_cor = scidata
 
-    if cor == 1:
+    if cor:
 
         # Crop Science Image.
         sh = scidata.shape
@@ -601,7 +551,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         # Apply overscan correction to science raster
         scidata_cor = overscan_cor(scidata_c, overscan, a, bpix)
 
-    if dark == 1:
+    if dark:
         # Apply Dark correction
 
         # OLD Dark correction REQUIRES meddif FORTRAN external.
@@ -646,23 +596,21 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         scidata_cord = scidata_cor - newdark
 
     # Return if only clipping and overscan is performed.
-    if cor == 1 and dark == 0:
+    if cor and not dark:
         # print ("Only performed clipping and overscan")
         return scidata_cor
     # Return if only dark correction is performed.
-    elif cor == 0 and dark == 1:
+    elif not cor and dark:
         # print ("Only performed dark correction")
         return scidata_cord
     # Return if both clipping, overscan and dark correction is performed.
-    elif cor == 1 and dark == 1:
+    elif cor and dark:
         # print ("Performed both clipping and dark correction")
         return scidata_cord
     # Return original scidata if nothing was performed.
     else:
         # print ("No clipping, overscan and dark correction requested")
         return scidata
-
-    return scidata_cord  # TODO unreachable, remove/repace with else?
 
 
 def lightprocess(filename, date, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, photap, bpix):
@@ -707,12 +655,109 @@ def lightprocess_save(filename, savedir, darkavg, xsc, ysc, xov, yov, snrcut, fm
     header['BSCALE'] = 1.0
     hdu = fits.PrimaryHDU(scidata_cord)
     hdu.scale('int32')  # Scaling to 32-bit integers.
-    i = 0
-    for h in header:  # TODO loop does not need i?
-        if h != 'SIMPLE' and h != 'BITPIX' and h != 'NAXIS' and h != 'NAXIS1' and h != 'NAXIS2' and h != 'EXTEND':
-            # print(h, header[i])
-            hdu.header.append((h, header[i]))
-        i = i+1
+
+    for key in header:
+        if key not in ['SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'EXTEND']:
+            hdu.header.append((key, header[key]))
+
     hdu.writeto(newfile, overwrite=True)
 
     return info
+
+
+def main(target, obspath, savedir, **kwargs):
+    """Process all observations of a specific target in a specific directory."""
+
+    # Make sure output directory exists.
+    utils.ensure_dir(savedir)
+
+    # Unpack parameters.
+    T = kwargs.pop('T', 8)
+    bpix = kwargs.pop('bpix', -1.0e10)
+    snrcut = kwargs.pop('snrcut', 10.0)
+    fmax = kwargs.pop('fmax', 2)
+    xoff = kwargs.pop('xoff', 0)
+    yoff = kwargs.pop('yoff', 0)
+    nproc = kwargs.pop('nproc', 4)
+
+    print('Processing observations in directory {}'.format(obspath))
+
+    # Create a table of all fits files in the specified diretcory.
+    obs_table = utils.observation_table(obspath)
+
+    # Parse the observation to select the desired target and appropriate darks.
+    try:  # TODO remove try except
+        light_table, dark_table = utils.parse_observation_table(obs_table, target)
+    except ValueError:
+        return
+    nlight, ndark = len(light_table), len(dark_table)
+
+    # Process the dark images.
+    print('Processing {} dark images to create the masterdark.'.format(ndark))
+
+    # Use multiprocessing to process all dark images.
+    results = []
+    pbar = tqdm.tqdm(total=ndark)
+    with mp.Pool(nproc) as p:
+
+        for i in range(ndark):
+
+            darkfile = dark_table['FILENAME'][i]
+            xsc, ysc = dark_table['xsc'][i], dark_table['ysc'][i]
+            xov, yov = dark_table['xov'][i], dark_table['yov'][i]
+
+            args = (obspath, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
+
+            results.append(p.apply_async(darkprocess, args=args, callback=lambda x: pbar.update()))
+
+        p.close()
+        p.join()
+
+        alldarkdata = [result.get() for result in results]
+
+    pbar.close()
+
+    # Combine the processed darks to obtain a master dark.
+    masterdark = combinedarks(alldarkdata)
+
+    # Display the master dark.
+#    imstat = utils.imagestat(masterdark, bpix)
+#    visualize.plot_image(masterdark, imstat, 0.3, 10.0)
+
+    # Save the masterdark.
+    head, tail = os.path.split(obspath)
+    darkname = 'masterdark_{}_{}.fits'.format(tail, target)
+    darkname = os.path.join(savedir, darkname)
+    hdu = fits.PrimaryHDU(masterdark)
+    hdu.writeto(darkname, overwrite=True)
+
+    # Clear memory.
+    del alldarkdata
+
+    # Process the light images.
+    print('Processing {} light images.'.format(nlight))
+
+    # Use multiproessing to process all light images.
+    pbar = tqdm.tqdm(total=nlight)
+    with mp.Pool(nproc) as p:
+
+        for i in range(nlight):
+
+            filename = os.path.join(obspath, light_table['FILENAME'][i])
+            xsc, ysc = light_table['xsc'][i], light_table['ysc'][i]
+            xov, yov = light_table['xov'][i], light_table['yov'][i]
+
+            args = (filename, savedir, masterdark, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
+
+            p.apply_async(lightprocess_save, args=args, callback=lambda x: pbar.update())
+
+        p.close()
+        p.join()
+
+    pbar.close()
+
+    return
+
+
+if __name__ == '__main__':
+    main()

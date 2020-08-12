@@ -9,6 +9,15 @@ from astropy.io import fits
 from astropy.table import Table
 
 
+def ensure_dir(path):
+    """Check if a directory exists, create it if it does not."""
+
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+    return
+
+
 def bindata(time, data, tbin):  # TODO it might be possible to clean this one up a bit.
     """"""
 
@@ -188,6 +197,28 @@ def getimage_dim(filename):
     return trim, btrim, xsc, ysc, xov, yov
 
 
+def parse_image_dim(header):
+    """"""
+
+    trimsec = header['TRIMSEC']
+    trim = re.findall(r'\d+', trimsec)
+
+    btrimsec = header['BIASSEC']
+    btrim = re.findall(r'\d+', btrimsec)
+
+    n = len(trim)
+    for i in range(n):
+        trim[i] = int(trim[i])
+        btrim[i] = int(btrim[i])
+
+    xsc = int(trim[3]) - int(trim[2]) + 1  # TODO seems like we're doubling down on the ints here.
+    ysc = int(trim[1]) - int(trim[0]) + 1
+    xov = int(btrim[3]) - int(btrim[2]) + 1  # I ignore the last few columns.
+    yov = int(btrim[1]) - int(btrim[0]) - 3
+
+    return trim, btrim, xsc, ysc, xov, yov
+
+
 def read_fitsdata(filename):
     """Usage scidata = read_fitsdata(filename)"""
 
@@ -238,7 +269,7 @@ def observation_table(obspath, header_keys=None):
     for i, filename in enumerate(filelist):
         header = fits.getheader(filename)
         headers.append(header)
-        trim[i], btrim[i], xsc[i], ysc[i], xov[i], yov[i] = getimage_dim(filename)
+        trim[i], btrim[i], xsc[i], ysc[i], xov[i], yov[i] = parse_image_dim(header)
 
     # Create the table and add the filenames.
     obs_table = Table()
