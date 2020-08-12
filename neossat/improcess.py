@@ -84,20 +84,19 @@ def fourierd2d(a, xn, yn, xoff, yoff):
     return m
 
 
-def fourierd2d(a, xn, yn, xoff, yoff):
+def func(a, xn, yn, xoff, yoff, overscan):  # TODO more descriptive function name.
     """"""
 
-    tpi = 2.0*np.pi
-    m = np.ones([int(xn)*int(yn)])*a[0]  # Zero point.
-    n = len(a)  # Number of parameters in model.
-    for k in range(1, n, 4):  # TODO can these loops be replaced with np.meshgrid or similar?
-        m += [a[k]*np.sin(tpi*(a[k+1]*(i - xoff) + a[k+2]*(j - yoff)) + a[k+3]) for i in range(xn) for j in range(yn)]
-    m = np.reshape(m, (xn, yn))
+    model = fourierd2d(a, xn, yn, xoff, yoff)
+    sqmeanabs = np.sqrt(np.mean(np.abs(overscan)))
 
-    return m
+    diff = (overscan - model)/sqmeanabs
+    diffflat = diff.flatten()
+
+    return diffflat
 
 
-def funcphase(aoff, a, xn, yn, scidata_in, stdcut):
+def funcphase(aoff, a, xn, yn, scidata_in, stdcut=None):
     """Determine phase offset for science image."""
 
     xoff = aoff[0]
@@ -110,24 +109,12 @@ def funcphase(aoff, a, xn, yn, scidata_in, stdcut):
     else:
         diff = (scidata_in - model)
 
-    diffflat = diff.flatten()
-    diffflat[np.abs(diffflat) > stdcut] = 0.0
+    if stdcut is not None:
 
-    return diffflat
+        diffflat = diff.flatten()
+        diffflat[np.abs(diffflat) > stdcut] = 0.0
 
-
-def funcphase_noflatten(aoff, a, xn, yn, scidata_in):
-    """"""
-
-    xoff = aoff[0]
-    yoff = aoff[1]
-    model = fourierd2d(a, xn, yn, xoff, yoff)
-    sqmeanabs = np.sqrt(np.mean(np.abs(scidata_in)))
-
-    if sqmeanabs > 0:  # TODO how could this not be >0? Maybe not finite?
-        diff = (scidata_in - model)/sqmeanabs
-    else:
-        diff = (scidata_in - model)
+        return diffflat
 
     return diff
 
@@ -144,7 +131,7 @@ def fouriercor(scidata_in, a):
 
     # Apply a sigma cut, to reduce the effect of stars in the image.
     aoff = np.array([aph[0][0], aph[0][1]])
-    diff = funcphase_noflatten(aoff, a, xn, yn, scidata_z)
+    diff = funcphase(aoff, a, xn, yn, scidata_z)
     stdcut = 3.0*np.std(diff)
     aph = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
 
@@ -395,19 +382,7 @@ def ls_seg_func(x0, data1, data2, derr):
     return diff
 
 
-def func(a, xn, yn, xoff, yoff, overscan):  # TODO more descriptive function name.
-    """"""
-
-    model = fourierd2d(a, xn, yn, xoff, yoff)
-    sqmeanabs = np.sqrt(np.mean(np.abs(overscan)))
-    # diff = np.power(overscan - model, 2)/sqmeanabs
-    diff = (overscan - model)/sqmeanabs
-    diffflat = diff.flatten()
-
-    return diffflat
-
-
-def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO this is a likely bottlneck, see if it can be refactored.
+def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
     """"""
 
     # Count number of frequencies.
