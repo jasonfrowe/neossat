@@ -11,19 +11,15 @@ from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 
 from . import utils
-from . import visualize  # TODO will likely change as we continue to split the code across files.
+from . import visualize
 
 
 def columncor(scidata, bpix):
     """"""
 
     scidata_masked = np.ma.array(scidata, mask=scidata < bpix)
-    n1 = scidata.shape[0]
-    n2 = scidata.shape[1]
-    scidata_colcor = np.zeros((n1, n2))
-    for i in range(n2):
-        med = np.ma.median(scidata_masked[:, i])
-        scidata_colcor[:, i] = scidata[:, i] - med
+    med = np.ma.median(scidata_masked, axis=0)
+    scidata_colcor = scidata - med
 
     return scidata_colcor
 
@@ -75,16 +71,15 @@ def combine(imagefiles, ilow, ihigh, bpix):
     return masterimage
 
 
-def fourierd2d_v1(a, xn, yn, xoff, yoff):
+def fourierd2d(a, xn, yn, xoff, yoff):
     """"""
 
-    tpi = 2.0*np.pi
-    m = np.ones([int(xn), int(yn)])*a[0]  # Zero point.
     n = len(a)  # Number of parameters in model.
-    for i in range(xn):
-        for j in range(yn):
-            for k in range(1, n, 4):
-                m[i, j] = m[i, j] + a[k]*np.sin(tpi*(a[k+1]*(i - xoff) + a[k+2]*(j - yoff)) + a[k+3])
+    tpi = 2.0*np.pi
+    m = a[0]*np.ones([int(xn), int(yn)])  # Zero point.
+    xx, yy = np.indices((xn, yn))
+    for k in range(1, n, 4):
+        m += a[k]*np.sin(tpi*(a[k+1]*(xx - xoff) + a[k+2]*(yy - yoff)) + a[k+3])
 
     return m
 
@@ -165,23 +160,18 @@ def overscan_cor(scidata_c, overscan, a, bpix):
     """"""
 
     scidata_co = fouriercor(scidata_c, a)
-    # imstat = imagestat(scidata_co, bpix)
-    # plot_image(scidata_co, imstat, -0.2, 3.0)
-    # print(imstat)
 
     # General Overscan correction.
     xn = overscan.shape[0]
     yn = overscan.shape[1]
     model = fourierd2d(a, xn, yn, 0.0, 0.0)
     overscan_cor1 = overscan - model
-    row_cor = [np.sum(overscan_cor1[i, :])/yn for i in range(xn)]
-    scidata_cor = np.copy(scidata_co)
-    for i in range(xn):
-        scidata_cor[i, :] = scidata_co[i, :] - row_cor[i]
 
-    # imstat = imagestat(scidata_cor, bpix)
-    # plot_image(scidata_cor, imstat, -0.2, 3.0)
-    # print(imstat)
+#    row_cor = np.mean(overscan_cor1, axis=1, keepdims=True)
+#    scidata_cor = scidata_co - row_cor
+
+    row_cor, _, _ = sigma_clipped_stats(overscan_cor1, axis=1)
+    scidata_cor = scidata_co - row_cor[:, np.newaxis]
 
     return scidata_cor
 
@@ -203,13 +193,10 @@ def darkprocess(workdir, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff,
     sh = scidata.shape
     otrim = np.array([sh[0]-xov, sh[0], 0, yov])
     overscan = np.copy(scidata[otrim[0]:otrim[1], otrim[2]:otrim[3]])
-    mean = 0.0
-    for i in range(yov):
-        med = np.median(overscan[:, i])
-        overscan[:, i] = overscan[:, i]-med
-        mean = mean+med
-    mean = mean/yov
-    overscan = overscan+mean  # Add mean back to overscan (this is the BIAS).
+    med = np.median(overscan, axis=0)
+    overscan = overscan - med
+    mean = np.mean(med)
+    overscan = overscan + mean  # Add mean back to overscan (this is the BIAS).
 
     # Fourier Decomp of overscan.
     a = fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=info)
@@ -296,21 +283,10 @@ def darkcorrect(scidata, masterdark, bpix):
     maxd = masked_dark.max()
     mind = masked_dark.min()
 
-    n1 = scidata.shape[0]
-    n2 = scidata.shape[1]
+    mask = (scidata > bpix) & (masterdark > bpix) & (scidata > mind) & (scidata < maxd)
 
-    # TODO I think this entire loop can go.
-    x = []  # Contains linear array of dark pixel values. TODO could do with more descriptive name.
-    y = []  # Contains linear array of science pixel values. TODO could do with more descriptive name.
-    for i in range(n1):
-        for j in range(n2):
-            # TODO not sure this evaluates correctly with the brackets as they are.
-            if (scidata[i, j] > bpix and masterdark[i, j] > bpix and scidata[i, j] > mind and scidata[i, j] < maxd):
-                x.append(masterdark[i, j])
-                y.append(scidata[i, j])
-
-    x = np.array(x)  # Convert to numpy arrays.
-    y = np.array(y)
+    x = masterdark[mask]
+    y = scidata[mask]
 
     n_samples = len(x)
 
@@ -355,7 +331,7 @@ def darkcorrect(scidata, masterdark, bpix):
             x1, y1 = find_intercept_point(m, c, x0, y0)
 
             # Distance from point to the model.
-            dist = math.sqrt((x1 - x0)**2 + (y1 - y0)**2)
+            dist = np.sqrt((x1 - x0)**2 + (y1 - y0)**2)
 
             # Check whether it's an inlier or not.
             if dist < ransac_threshold:
@@ -403,14 +379,8 @@ def seg_func(x0, data):
 
     b2 = m1*tp + b1-m2*tp
 
-    ans = []  # TODO Can be done in 1 line with np.where.
-    for x in data.flatten():
-        if x < tp:
-            y = m1*x + b1
-        else:
-            y = m2*x + b2
-        ans.append(y)
-    ans = np.array(ans)
+    ans = np.where(data < tp, m1 * data + b1, m2 * data + b2)
+    ans = ans.flatten()
 
     return ans
 
@@ -481,19 +451,16 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):  # TODO 
             imstat = utils.imagestat(ftoverscan_abs, bpix)
             visualize.plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn, :T*yn//2])), imstat, 0.0, 10.0)
 
-        mean_ftoverscan_abs = np.mean(ftoverscan_abs[:T*xn, :T*yn//2])
-        std_ftoverscan_abs = np.std(ftoverscan_abs[:T*xn, :T*yn//2])
+        mean_ftoverscan_abs = np.mean(ftoverscan_abs[T*1:T*xn, T*1:T*yn//2])
+        std_ftoverscan_abs = np.std(ftoverscan_abs[T*1:T*xn, T*1:T*yn//2])
         if info >= 1:
             print('mean, std:', mean_ftoverscan_abs, std_ftoverscan_abs)
 
         # Locate Frequency with largest amplitude.
-        maxamp = np.min(ftoverscan_abs[:T*xn, :T*yn//2])
-        for i in range(T*1, T*xn):
-            for j in range(T*1, T*yn//2):
-                if ftoverscan_abs[i, j] > maxamp:
-                    maxamp = ftoverscan_abs[i, j]
-                    maxi = i
-                    maxj = j
+        max_array = ftoverscan_abs[T*1:T*xn, T*1:T*yn//2]
+        maxi, maxj = np.unravel_index(np.argmax(max_array), max_array.shape)
+        maxi += T*1
+        maxj += T*1
 
         snr = (ftoverscan_abs[maxi, maxj] - mean_ftoverscan_abs)/std_ftoverscan_abs
         if info >= 1:
