@@ -1,7 +1,8 @@
 import os
 import sys
+import multiprocessing as mp
 
-import math
+import tqdm
 import numpy as np
 from scipy import optimize
 from scipy import fftpack
@@ -662,3 +663,101 @@ def lightprocess_save(filename, savedir, darkavg, xsc, ysc, xov, yov, snrcut, fm
     hdu.writeto(newfile, overwrite=True)
 
     return info
+
+
+def main(target, obspath, savedir, **kwargs):
+    """Process all observations of a specific target in a specific directory."""
+
+    # Make sure output directory exists.
+    utils.ensure_dir(savedir)
+
+    # Unpack parameters.
+    T = kwargs.pop('T', 8)
+    bpix = kwargs.pop('bpix', -1.0e10)
+    snrcut = kwargs.pop('snrcut', 10.0)
+    fmax = kwargs.pop('fmax', 2)
+    xoff = kwargs.pop('xoff', 0)
+    yoff = kwargs.pop('yoff', 0)
+    nproc = kwargs.pop('nproc', 4)
+
+    print('Processing observations in directory {}'.format(obspath))
+
+    # Create a table of all fits files in the specified diretcory.
+    obs_table = utils.observation_table(obspath)
+
+    # Parse the observation to select the desired target and appropriate darks.
+    try:  # TODO remove try except
+        light_table, dark_table = utils.parse_observation_table(obs_table, target)
+    except ValueError:
+        return
+    nlight, ndark = len(light_table), len(dark_table)
+
+    # Process the dark images.
+    print('Processing {} dark images to create the masterdark.'.format(ndark))
+
+    # Use multiprocessing to process all dark images.
+    results = []
+    pbar = tqdm.tqdm(total=ndark)
+    with mp.Pool(nproc) as p:
+
+        for i in range(ndark):
+
+            darkfile = dark_table['FILENAME'][i]
+            xsc, ysc = dark_table['xsc'][i], dark_table['ysc'][i]
+            xov, yov = dark_table['xov'][i], dark_table['yov'][i]
+
+            args = (obspath, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
+
+            results.append(p.apply_async(darkprocess, args=args, callback=lambda x: pbar.update()))
+
+        p.close()
+        p.join()
+
+        alldarkdata = [result.get() for result in results]
+
+    pbar.close()
+
+    # Combine the processed darks to obtain a master dark.
+    masterdark = combinedarks(alldarkdata)
+
+    # Display the master dark.
+#    imstat = utils.imagestat(masterdark, bpix)
+#    visualize.plot_image(masterdark, imstat, 0.3, 10.0)
+
+    # Save the masterdark.
+    head, tail = os.path.split(obspath)
+    darkname = 'masterdark_{}_{}.fits'.format(tail, target)
+    darkname = os.path.join(savedir, darkname)
+    hdu = fits.PrimaryHDU(masterdark)
+    hdu.writeto(darkname, overwrite=True)
+
+    # Clear memory.
+    del alldarkdata
+
+    # Process the light images.
+    print('Processing {} light images.'.format(nlight))
+
+    # Use multiproessing to process all light images.
+    pbar = tqdm.tqdm(total=nlight)
+    with mp.Pool(nproc) as p:
+
+        for i in range(nlight):
+
+            filename = os.path.join(obspath, light_table['FILENAME'][i])
+            xsc, ysc = light_table['xsc'][i], light_table['ysc'][i]
+            xov, yov = light_table['xov'][i], light_table['yov'][i]
+
+            args = (filename, savedir, masterdark, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
+
+            p.apply_async(lightprocess_save, args=args, callback=lambda x: pbar.update())
+
+        p.close()
+        p.join()
+
+    pbar.close()
+
+    return
+
+
+if __name__ == '__main__':
+    main()
