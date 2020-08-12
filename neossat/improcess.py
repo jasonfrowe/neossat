@@ -27,25 +27,32 @@ def columncor(scidata, bpix):
 def combine(imagefiles, ilow, ihigh, bpix):
     """Usage: masterimage = combine(imagefiles)"""
 
-    image1 = utils.read_fitsdata(imagefiles[0])  # Read in first image.
-    n1 = image1.shape[0]  # Get dimensions of image.
-    n2 = image1.shape[1]
-    nfile = len(imagefiles)  # Get number of expected images.
-    allfitsdata = np.zeros((nfile, n1, n2))  # Allocate array to read in all FITS images.
-    masterimage = np.zeros((n1, n2))  # Allocate array for combined image.
-    allfitsdata[0, :, :] = image1  # Store first image in array.
-    icount = 0
-    for f in imagefiles:  # Loop over all files. TODO f unused loop over icount instead?
-        icount += 1
-        if icount > 1:  # Skip first image (already in array).
-            image1 = utils.read_fitsdata(imagefiles[icount-1])  # Read in image.
-            allfitsdata[icount-1, :, :] = image1  # Store image in array.
+    # Read in first image.
+    image1 = utils.read_fitsdata(imagefiles[0])
+
+    # Get the number of images and the image dimensions.
+    nfiles = len(imagefiles)
+    n1, n2 = image1.shape
+
+    # Allocate the necessary arrays.
+    masterimage = np.zeros((n1, n2))
+    allfitsdata = np.zeros((nfiles, n1, n2))
+
+    # Store first image in array.
+    allfitsdata[0, :, :] = image1
+
+    # Loop over the remaining images.
+    for icount, filename in enumerate(imagefiles):
+
+        # Skip first image (already in array).
+        if icount > 0:
+            allfitsdata[icount, :, :] = utils.read_fitsdata(filename)
 
     for i in range(n1):
         for j in range(n2):
             pixels = []
-            for k in range(nfile):
-                if allfitsdata[k, i, j] > bpix:  # Exclude bad-pixels. TODO what is the format of badpix, a bool?
+            for k in range(nfiles):
+                if allfitsdata[k, i, j] > bpix:  # Exclude bad-pixels.
                     pixels.append(allfitsdata[k, i, j])
             pixels = np.array(pixels)
             npixels = len(pixels)
@@ -173,12 +180,12 @@ def darkprocess(workdir, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff,
 
     # Crop Science Image.
     sh = scidata.shape
-    strim = np.array([sh[0]-xsc, sh[0], sh[1]-ysc, sh[1]])
+    strim = np.array([sh[0] - xsc, sh[0], sh[1] - ysc, sh[1]])
     scidata_c = np.copy(scidata[strim[0]:strim[1], strim[2]:strim[3]])
 
     # Crop Overscan.
     sh = scidata.shape
-    otrim = np.array([sh[0]-xov, sh[0], 0, yov])
+    otrim = np.array([sh[0] - xov, sh[0], 0, yov])
     overscan = np.copy(scidata[otrim[0]:otrim[1], otrim[2]:otrim[3]])
     med = np.median(overscan, axis=0)
     overscan = overscan - med
@@ -364,7 +371,7 @@ def seg_func(x0, data):
     tp = x0[3]
     # print(x0)
 
-    b2 = m1*tp + b1-m2*tp
+    b2 = m1*tp + b1 - m2*tp
 
     ans = np.where(data < tp, m1 * data + b1, m2 * data + b2)
     ans = ans.flatten()
@@ -386,7 +393,7 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
     """"""
 
     # Count number of frequencies.
-    freqs = 0
+    nfreqs = 0
 
     # Calculate Median of overscan region.
     med_overscan = np.median(overscan)
@@ -410,11 +417,11 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
     yf = np.linspace(0.0, 1.0/2.0, T*yn//2)
 
     if fmax > 0:
-        loop = 0  # TODO loop is used as a boo,use True/False.
+        loop = True
     else:
-        loop = 1
+        loop = False
 
-    while loop == 0:
+    while loop:
 
         # Remove median, model and then calculate FFT.
         overscan_os[:xn, :yn] = overscan - med_overscan - model
@@ -442,8 +449,8 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
             print('SNR,i,j,amp: ', snr, maxi, maxj, ftoverscan_abs[maxi, maxj])
             # print(ftoverscan_abs[maxi, maxj], xf[maxi], yf[maxj], np.angle(ftoverscan[maxi, maxj]))
 
-        if (snr > snrcut) and (freqs < fmax):
-            freqs = freqs+1
+        if (snr > snrcut) and (nfreqs < fmax):
+            nfreqs += 1
             a = np.append(a, [ftoverscan_abs[maxi, maxj], xf[maxi], yf[maxj], np.angle(ftoverscan[maxi, maxj])+np.pi/2])
             # a1 = np.array([ftoverscan_abs[maxi, maxj], xf[maxi], yf[maxj], np.angle(ftoverscan[maxi, maxj])-np.pi/2])
             # a1 = np.append(0.0, a1)
@@ -463,7 +470,7 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
                 print("--------------")
 
         else:
-            loop = 1
+            loop = False
             # Remove median, model and then calculate FFT.
             # overscan_os[:xn, :yn] = overscan - med_overscan - model
             # ftoverscan = fft2(overscan_os)
@@ -483,8 +490,8 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
 def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, info, bpix):
     """"""
 
-    cor = 0  # Updates from Hamza. TODO cor and dark are used as bool, use true and false.
-    dark = 0
+    cor = False  # Updates from Hamza.
+    dark = False
     scidata = utils.read_fitsdata(filename)
     scidata_cor = None
     scidata_cord = None
@@ -498,15 +505,15 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
     hdul.close()
     # Set flags of what needs to be performed.
     if not NAXIS1 == xsc or not NAXIS2 == ysc:
-        cor = 1
+        cor = True
     if len(darkavg) != 0:
-        dark = 1
+        dark = True
 
     # If we only need to perform dark correction then set the scidata_cor to scidata.
-    if cor == 0 and dark == 1:
+    if not cor and dark:
         scidata_cor = scidata
 
-    if cor == 1:
+    if cor:
 
         # Crop Science Image.
         sh = scidata.shape
@@ -543,7 +550,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         # Apply overscan correction to science raster
         scidata_cor = overscan_cor(scidata_c, overscan, a, bpix)
 
-    if dark == 1:
+    if dark:
         # Apply Dark correction
 
         # OLD Dark correction REQUIRES meddif FORTRAN external.
@@ -588,23 +595,21 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         scidata_cord = scidata_cor - newdark
 
     # Return if only clipping and overscan is performed.
-    if cor == 1 and dark == 0:
+    if cor and not dark:
         # print ("Only performed clipping and overscan")
         return scidata_cor
     # Return if only dark correction is performed.
-    elif cor == 0 and dark == 1:
+    elif not cor and dark:
         # print ("Only performed dark correction")
         return scidata_cord
     # Return if both clipping, overscan and dark correction is performed.
-    elif cor == 1 and dark == 1:
+    elif cor and dark:
         # print ("Performed both clipping and dark correction")
         return scidata_cord
     # Return original scidata if nothing was performed.
     else:
         # print ("No clipping, overscan and dark correction requested")
         return scidata
-
-    return scidata_cord  # TODO unreachable, remove/repace with else?
 
 
 def lightprocess(filename, date, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, photap, bpix):
@@ -649,12 +654,11 @@ def lightprocess_save(filename, savedir, darkavg, xsc, ysc, xov, yov, snrcut, fm
     header['BSCALE'] = 1.0
     hdu = fits.PrimaryHDU(scidata_cord)
     hdu.scale('int32')  # Scaling to 32-bit integers.
-    i = 0
-    for h in header:  # TODO loop does not need i?
-        if h != 'SIMPLE' and h != 'BITPIX' and h != 'NAXIS' and h != 'NAXIS1' and h != 'NAXIS2' and h != 'EXTEND':
-            # print(h, header[i])
-            hdu.header.append((h, header[i]))
-        i = i+1
+
+    for key in header:
+        if key not in ['SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'EXTEND']:
+            hdu.header.append((key, header[key]))
+
     hdu.writeto(newfile, overwrite=True)
 
     return info
