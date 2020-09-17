@@ -25,7 +25,7 @@ def plot_histogram(scidata, imstat, sigscalel, sigscaleh):
     return
 
 
-def plot_image_wsource(scidata, imstat, sigscalel, sigscaleh, sources):
+def plot_image_wsource(scidata, imstat, sigscalel, sigscaleh, sources=None, xy=None, figname=None, display=True):
     """"""
 
     eps = 1.0e-9
@@ -38,7 +38,13 @@ def plot_image_wsource(scidata, imstat, sigscalel, sigscaleh, sources):
     vmin = np.min(flat[flat > imstat[2] + imstat[3]*sigscalel]) - imstat[0] + eps
     vmax = np.max(flat[flat < imstat[2] + imstat[3]*sigscaleh]) - imstat[0] + eps
 
-    positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
+    if sources is not None:
+        positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
+    elif xy is not None:
+        positions = np.column_stack(xy)
+    else:
+        raise ValueError('Either sources or xy must be give.')
+
     apertures = CircularAperture(positions, r=4.)
 
     plt.figure(figsize=(20, 20))  # Adjust size of figure.
@@ -49,7 +55,14 @@ def plot_image_wsource(scidata, imstat, sigscalel, sigscaleh, sources):
     plt.axis((-0.5, scidata.shape[1]-0.5, -0.5, scidata.shape[0]-0.5))
     plt.xlabel("Column (Pixels)")
     plt.ylabel("Row (Pixels)")
-    plt.show()
+
+    if figname is not None:
+        plt.savefig(figname)
+
+    if display:
+        plt.show()
+
+    plt.close()
 
     return
 
