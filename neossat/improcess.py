@@ -686,10 +686,7 @@ def main(target, obspath, savedir, **kwargs):
     obs_table = utils.observation_table(obspath)
 
     # Parse the observation to select the desired target and appropriate darks.
-    try:  # TODO remove try except
-        light_table, dark_table = utils.parse_observation_table(obs_table, target)
-    except ValueError:
-        return
+    light_table, dark_table = utils.parse_observation_table(obs_table, target)
     nlight, ndark = len(light_table), len(dark_table)
 
     # Process the dark images.
