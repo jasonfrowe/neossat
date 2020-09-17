@@ -247,7 +247,7 @@ def observation_table(obspath, header_keys=None):
     """ Given a directory containing NEOSSat observations create a table of the observations. """
 
     # List of mandatory header keys.
-    columns = ['OBJECT', 'SHUTTER', 'MODE', 'JD-OBS', 'EXPOSURE']
+    columns = ['OBJECT', 'SHUTTER', 'MODE', 'JD-OBS', 'EXPOSURE', 'ELA_MIN', 'SUN_MIN']
 
     # Combine the mandaory and requested header keys.
     if header_keys is not None:
@@ -255,7 +255,7 @@ def observation_table(obspath, header_keys=None):
         columns = list(set(columns))  # Removes potential duplicates.
 
     # Get a list of all fits files in the specified directory.
-    filelist = glob.glob(os.path.join(obspath, '*.fits'))
+    filelist = glob.glob(os.path.join(obspath, 'NEOS_*.fits'))
 
     # Read all the headers TODO protect against corrupted files.
     headers = []
@@ -266,10 +266,32 @@ def observation_table(obspath, header_keys=None):
     ysc = np.zeros(nfiles, dtype=int)
     xov = np.zeros(nfiles, dtype=int)
     yov = np.zeros(nfiles, dtype=int)
+    badidx = []
     for i, filename in enumerate(filelist):
-        header = fits.getheader(filename)
+
+        try:
+            header = fits.getheader(filename)
+        except OSError:
+            print('File {} appears to be corrupt, skipping'.format(filename))
+            badidx.append(i)
+            continue
+
+        if header['IMGSTATE'] == 'INCOMPLETE':
+            print('File {} appears to be corrupt, skipping'.format(filename))
+            badidx.append(i)
+            continue
+
         headers.append(header)
         trim[i], btrim[i], xsc[i], ysc[i], xov[i], yov[i] = parse_image_dim(header)
+
+    # Remove coorupt files.
+    filelist = np.delete(filelist, badidx)
+    trim = np.delete(trim, badidx, axis=0)
+    btrim = np.delete(btrim, badidx, axis=0)
+    xsc = np.delete(xsc, badidx)
+    ysc = np.delete(ysc, badidx)
+    xov = np.delete(xov, badidx)
+    yov = np.delete(yov, badidx)
 
     # Create the table and add the filenames.
     obs_table = Table()
@@ -295,13 +317,14 @@ def observation_table(obspath, header_keys=None):
     return obs_table
 
 
-def parse_observation_table(obs_table, target):
+def parse_observation_table(obs_table, target, ela_tol=15., sun_tol=20.):
     """ Split a table of observations into observations of a specific object and corresponding darks"""
 
     mask = (obs_table['OBJECT'] == target) & (obs_table['shutter'] == 0) & \
-           ((obs_table['mode'] == 16) | (obs_table['mode'] == 13))
+           ((obs_table['mode'] == 16) | (obs_table['mode'] == 13)) & \
+           (obs_table['ELA_MIN'] > ela_tol) & (obs_table['SUN_MIN'] > sun_tol)
     if not np.any(mask):
-        raise ValueError('Table does not contain observations of ' + target)
+        raise ValueError('Table does not contain valid observations of ' + target)
 
     light_table = obs_table[mask]
     xsc, ysc = light_table[0]['xsc'], light_table[0]['ysc']
@@ -309,7 +332,7 @@ def parse_observation_table(obs_table, target):
     mask = (obs_table['OBJECT'] == 'DARK') & (obs_table['shutter'] == 1) & \
            (obs_table['xsc'] == xsc) & (obs_table['ysc'] == ysc)
     if not np.any(mask):
-        raise ValueError('No appropriate darks found for observations of ' + target)
+        raise ValueError('No valid darks found for observations of ' + target)
 
     dark_table = obs_table[mask]
 
