@@ -130,21 +130,21 @@ def funcphase(aoff, a, xn, yn, scidata_in, stdcut=None):
 def fouriercor(scidata_in, a):
     """Apply Fourier correction from overscan."""
 
-    aoff = np.array([0.0, 0.0])
-    xn = scidata_in.shape[0]
-    yn = scidata_in.shape[1]
+    xn, yn = scidata_in.shape
     scidata_z = scidata_in - np.median(scidata_in)
+
+    # Perform an initial fit.
+    aoff = np.array([0.5, 0.5])
     stdcut = 1.0e30
-    aph = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
+    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
 
     # Apply a sigma cut, to reduce the effect of stars in the image.
-    aoff = np.array([aph[0][0], aph[0][1]])
     diff = funcphase(aoff, a, xn, yn, scidata_z)
     stdcut = 3.0*np.std(diff)
-    aph = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
+    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
 
-    xoff = aph[0][0]  # Apply offsets.
-    yoff = aph[0][1]
+    # Remove the final model from the data.
+    xoff, yoff = aoff
     model = fourierd2d(a, xn, yn, xoff, yoff)
     scidata_cor = scidata_in - model
 
