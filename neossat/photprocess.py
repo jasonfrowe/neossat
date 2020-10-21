@@ -10,6 +10,8 @@ from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 
 from . import utils
+from . import visualize
+from .photometry import Photometry
 
 
 def photprocess(filename, date, photap, bpix):
@@ -165,6 +167,49 @@ def get_master_phot4all(workdir, lightlist, jddate, transall, master_phot_table,
     photometry_jd = np.array(photometry_jd)
 
     return photometry, photometry_jd
+
+
+def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=None):
+    """"""
+
+    if aper is None:
+        aper = 2.5 + 0.5 * np.arange(11)
+
+    if sky is None:
+        sky = np.array([10, 15])
+
+    # Get dimensions.
+    nimages = len(lightlist)
+    nstars = len(xref)
+    naper = len(aper)
+
+    # Create arrays.
+    xall = np.zeros((nimages, nstars))
+    yall = np.zeros((nimages, nstars))
+    flux = np.zeros((nimages, nstars, naper))
+    eflux = np.zeros((nimages, nstars, naper))
+    skybkg = np.zeros((nimages, nstars))
+    eskybkg = np.zeros((nimages, nstars))
+    photflag = np.zeros((nimages, nstars), dtype='uint8')
+
+    # Initialize photometric extraction.
+    extract = Photometry(aper, sky)  # TODO NEOSSat gain and badpix (saturated) values.
+
+    for i in range(nimages):
+
+        # Read the image.
+        scidata = utils.read_fitsdata(os.path.join(workdir, lightlist[i]))
+
+        # Compute star coordinates.
+        mat = rot[i]
+        invmat = np.linalg.inv(mat)
+
+        xall[i] = -offset[i, 0] + invmat[0, 0] * xref + invmat[0, 1] * yref
+        yall[i] = -offset[i, 1] + invmat[1, 0] * xref + invmat[1, 1] * yref
+
+        flux[i], eflux[i], skybkg[i], eskybkg[i], _, photflag[i] = extract(scidata, xall[i], yall[i])
+
+    return xall, yall, flux, eflux, skybkg, eskybkg, photflag
 
 
 def pca_model(pars, pca):
