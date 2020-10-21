@@ -826,7 +826,7 @@ def photo_centroid(scidata, bpix, starlist, ndp, dcoocon, itermax):
         dcoo = dcoocon + 1
         niter = 0
 
-        while (dcoo > dcoocon and niter < itermax):  # TODO check how this evaluates.
+        while (dcoo > dcoocon) and (niter < itermax):
 
             xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
             ycoo1 = np.copy(ycoo)
