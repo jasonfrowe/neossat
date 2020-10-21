@@ -251,12 +251,14 @@ def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
     err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
     if nm >= 3:
         offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
+        success = True
     else:
         offset = np.array([0, 0])
-        rot = np.array([[0, 0],
-                        [0, 0]])
+        rot = np.array([[1, 0],
+                        [0, 1]])
+        success = False
 
-    return offset, rot
+    return offset, rot, success
 
 
 def findtrans(nm, matches, x1, y1, x2, y2):
