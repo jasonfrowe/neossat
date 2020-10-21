@@ -1,10 +1,12 @@
 import os.path
+import multiprocessing as mp
 
-import math  # TODO I think numpy is preferred over math these days.
+import tqdm
 import numpy as np
 from scipy import optimize
 from scipy import spatial
 from scipy.linalg import lapack
+from skimage import transform
 
 from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
@@ -938,3 +940,183 @@ def phot_simple(scidata, starlist, bpix, sbox, sky):
         boxsum[i] = bsum - npix*sky  # Sky corrected flux measurement.
 
     return boxsum
+
+
+def flag_tracking(ra_vel, dec_vel, imgflag):  # TODO can RA_VEL/DEC_VEL be negative? If not this may not be the right criterion.
+    """"""
+
+    # Find RA_VEL outliers.
+    _, median, stddev = sigma_clipped_stats(ra_vel)
+    mask = np.abs(ra_vel - median) < 5*stddev
+    imgflag = np.where(mask, imgflag, imgflag + 1)
+
+    # Find DEC_VEL outliers.
+    _, median, stddev = sigma_clipped_stats(dec_vel)
+    mask = np.abs(dec_vel - median) < 5*stddev
+    imgflag = np.where(mask, imgflag, imgflag + 2)
+
+    return imgflag
+
+
+def flag_transforms(offset, rot, success, imgflag):
+    """"""
+
+    # Flag transformations where the matching failed.
+    imgflag = np.where(success, imgflag, imgflag + 4)
+
+    # Flag bad rotations.
+    mask = (np.abs(1.0 - rot[:, 0, 0]) < 0.05) & (np.abs(1.0 - rot[:, 1, 1]) < 0.05)
+    imgflag = np.where(mask, imgflag, imgflag + 8)
+
+    # Flag bad offsets.
+    mask = imgflag < 1  # Start by using only the currently unflagged images.
+    for i in range(5):
+
+        xmed = np.nanmean(offset[mask, 0])
+        ymed = np.nanmean(offset[mask, 1])
+        radius_sq = (offset[:, 0] - xmed)**2 + (offset[:, 1] - ymed)**2
+
+        stddev = np.sqrt(np.mean(radius_sq))
+        radius = np.sqrt(radius_sq)
+
+        mask = radius < 5*stddev
+
+    imgflag = np.where(mask, imgflag, imgflag + 16)
+
+    return imgflag
+
+
+def photmain(workdir, outname, **kwargs):
+    """"""
+
+    bpix = kwargs.pop('bpix', -1.0e10)
+    nproc = kwargs.pop('nproc', 4)
+    photap = kwargs.pop('photap', 4)
+
+    obs_table = utils.observation_table(workdir, header_keys=['RA_VEL', 'DEC_VEL', 'CCD-TEMP'])
+    nobs = len(obs_table)
+
+    # Creat an image flag and flag bad tracking.
+    obs_table['imgflag'] = np.zeros(len(obs_table), dtype='uint8')
+    obs_table['imgflag'] = flag_tracking(obs_table['RA_VEL'], obs_table['DEC_VEL'], obs_table['imgflag'])
+
+    # Extract photometry for image matching.
+    pbar = tqdm.tqdm(total=nobs)
+    results = []
+    with mp.Pool(nproc) as p:
+        for i in range(nobs):
+            filename = os.path.join(workdir, obs_table['FILENAME'][i])
+            jd_obs = obs_table['JD-OBS'][i]
+
+            args = (filename, jd_obs, photap, bpix)
+
+            results.append(p.apply_async(photprocess, args=args, callback=lambda x: pbar.update()))
+
+        p.close()
+        p.join()
+
+        photall = [result.get() for result in results]
+
+    pbar.close()
+
+    # Perform image matching.
+    nmaster = int(nobs / 2)
+    xmaster = np.array(photall[nmaster][0]['xcenter'][:])
+    ymaster = np.array(photall[nmaster][0]['ycenter'][:])
+    phot_master = photall[nmaster][0]['aperture_sum'][:]
+
+    pbar = tqdm.tqdm(total=nobs)
+    results = []
+    with mp.Pool(nproc) as p:
+
+        for i in range(nobs):
+            xframe = np.array(photall[i][0]['xcenter'][:])
+            yframe = np.array(photall[i][0]['ycenter'][:])
+            phot_frame = photall[i][0]['aperture_sum'][:]
+
+            args = (xmaster, ymaster, phot_master, xframe, yframe, phot_frame)
+
+            results.append(p.apply_async(calctransprocess, args=args, callback=lambda x: pbar.update()))
+
+        p.close()
+        p.join()
+
+        offset = np.zeros((nobs, 2))
+        rot = np.zeros((nobs, 2, 2))
+        success = np.zeros((nobs,), dtype='bool')
+        for i in range(nobs):
+            offset[i], rot[i], success[i] = results[i].get()
+
+    pbar.close()
+
+    # Add transformations to the obs_table and flag bad transformations.
+    obs_table['offset'] = offset
+    obs_table['rot'] = rot
+    obs_table['imgflag'] = flag_transforms(offset, rot, success, obs_table['imgflag'])
+
+    # Create a masterimage.
+    print('Creating the masterimage.')
+    image_stack = np.zeros((nobs, obs_table['xsc'][0], obs_table['ysc'][0]))
+    for i in range(nobs):
+
+        # Read the science image.
+        scidata = utils.read_fitsdata(os.path.join(workdir, obs_table['FILENAME'][i]))
+
+        # Prepare the transformation matrix.
+        matrix = np.eye(3)
+        matrix[0][0] = obs_table['rot'][i, 0, 0]
+        matrix[0][1] = obs_table['rot'][i, 0, 1]
+        matrix[0][2] = obs_table['offset'][i, 0]
+
+        matrix[1][0] = obs_table['rot'][i, 1, 0]
+        matrix[1][1] = obs_table['rot'][i, 1, 1]
+        matrix[1][2] = obs_table['offset'][i, 1]
+
+        # Transform the image and add it to the stack.
+        tform = transform.AffineTransform(matrix)
+        image_stack[i] = transform.warp(scidata, tform.inverse)
+
+    # Remove flagged images.
+    image_stack = image_stack[obs_table['imgflag'] < 1]
+
+    # Get the master image.
+    image_stack = image_stack - np.median(image_stack, axis=(1, 2), keepdims=True)
+    image_med = np.median(image_stack, axis=0)
+
+    # Clear memory.
+    del image_stack
+
+    # Create master photometry list.
+    print('Creating master photometry list.')
+    scidata = np.copy(image_med)
+    imstat = utils.imagestat(scidata, bpix)
+
+    mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
+    daofind = DAOStarFinder(fwhm=2.0, threshold=3. * std)
+    sources = daofind(scidata - median)
+
+    positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
+    apertures = CircularAperture(positions, r=photap)
+    master_phot_table = aperture_photometry(scidata - median, apertures)
+
+    figname = os.path.join(workdir, outname + '_masterimage.png')
+    visualize.plot_image_wsource(scidata, imstat, 1.0, 50.0, sources, figname=figname, display=False)
+
+    # Extract photometry.
+    print('Extracting photometry.')
+    xref = np.array(master_phot_table['xcenter'][:])
+    yref = np.array(master_phot_table['ycenter'][:])
+    xall, yall, flux, eflux, skybkg, eskybkg, photflag = get_photometry(workdir, obs_table['FILENAME'], xref, yref, obs_table['offset'], obs_table['rot'])
+
+    # Save the output.
+    columns = (xall, yall, flux, eflux, skybkg, eskybkg, photflag)
+    colnames = ('x', 'y', 'flux', 'eflux', 'skybkg', 'eskybkg', 'photflag')
+    obs_table.add_columns(columns, names=colnames)
+    tablename = os.path.join(workdir, outname + '_phottable2.fits')
+    obs_table.write(tablename, overwrite=True)
+
+    return
+
+
+if __name__ == '__main__':
+    photmain()
