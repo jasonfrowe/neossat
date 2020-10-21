@@ -76,9 +76,10 @@ def get_pcavec(photometry_jd, photometry, exptime, minflux=0, id_exclude=None):
 
     ii = 0
     for j in range(npca):
-        xpca[:, j] = [photometry[i][j]['aperture_sum']/exptime[i] for i in range(nspl)]  # Construct array.
 
-        if math.isnan(np.sum(xpca[:, j])) == False and all([j != x for x in id_exclude]):  # Require valid data.
+        xpca[:, j] = photometry[:, j]/exptime
+
+        if not np.any(np.isnan(xpca[:, j])) and j not in id_exclude:
 
             # Deal with outliers.
             darray = np.array(xpca[:, j])
@@ -87,17 +88,16 @@ def get_pcavec(photometry_jd, photometry, exptime, minflux=0, id_exclude=None):
             icut = icut + icut2
             xpca[:, j] = utils.replaceoutlier(darray, icut)
 
-            medianf[j] = np.median(xpca[:, j])  # Median raw flux from star.
+            # Normalize the lightcurve.
+            medianf[j] = np.median(xpca[:, j])
+            xpca[:, j] = xpca[:, j]/medianf[j]
 
-            xpca[:, j] = xpca[:, j]/medianf[j]  # Divide by median.
+            # Center the normalized lightcurve.
+            m[j] = np.median(xpca[:, j])
+            xpcac[:, j] = xpca[:, j] - m[j]
 
-            m[j] = np.median(xpca[:, j])  # Calculate median-centered data set.
-
-            # print(j, medianf[j], m[j])
-
-            xpcac[:, j] = xpca[:, j] - m[j]  # Remove mean.
             if medianf[j] > minflux:
-                ii = ii+1
+                ii = ii + 1
         else:
             badlist.append(j)
 
@@ -107,8 +107,6 @@ def get_pcavec(photometry_jd, photometry, exptime, minflux=0, id_exclude=None):
         if medianf[j] > minflux:
             jj = jj+1
             xpcac_c[:, jj] = xpcac[:, j]
-
-    print(nspl, ii)
 
     # Calculate the co-variance matrix.
     cov = np.zeros([ii, ii])
