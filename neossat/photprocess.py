@@ -868,12 +868,14 @@ def photo_centroid(scidata, bpix, starlist, ndp, dcoocon, itermax):
 
 
 def phot_simple(scidata, starlist, bpix, sbox, sky):
+    """"""
 
-    boxsum = []  # Store photometry in a list. TODO always initialize arrays when size is known.
+    # Initialize array.
+    nstar = len(starlist)
+    boxsum = np.zeros(nstar)
 
-    masked_scidata = np.ma.array(scidata, mask=scidata < bpix)  # Mask out bad pixels.
-
-    nstar = len(starlist)  # Number of stars.
+    # Mask bad pixels.
+    masked_scidata = np.ma.array(scidata, mask=scidata < bpix)
 
     for i in range(nstar):
 
@@ -888,6 +890,6 @@ def phot_simple(scidata, starlist, bpix, sbox, sky):
         bsum = np.sum(masked_scidata[j1:j2, k1:k2])  # Total flux inside box.
         npix = np.sum(masked_scidata[j1:j2, k1:k2]/masked_scidata[j1:j2, k1:k2])  # Number of pixels.
 
-        boxsum.append(bsum - npix*sky)  # Sky corrected flux measurement.
+        boxsum[i] = bsum - npix*sky  # Sky corrected flux measurement.
 
     return boxsum
