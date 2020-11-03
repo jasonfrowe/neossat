@@ -32,6 +32,33 @@ def photprocess(filename, date, photap, bpix):
     return [phot_table, date, mean, median, std, filename]
 
 
+def pca_model(pars, pca):
+    """Our Model"""
+
+    m = pars[0]
+    for i in range(len(pars)-1):
+        # print(i, pca[:, i+1])
+        m = m + pars[i+1]*pca[:, i]
+
+    # print(m)
+    return m
+
+
+def pca_func(pars, phot, pca, icut):
+    """Residuals"""
+
+    m = pca_model(pars, pca)
+    npt = len(phot)
+    diff = []
+    for i in range(npt):
+        if icut[i] == 0:
+            diff.append(phot[i] - m[i])
+        else:
+            diff.append(0)
+
+    return diff
+
+
 def pca_photcor(phot1, pcavec, npca, icut3=-1):
     """"""
 
@@ -212,33 +239,6 @@ def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=N
         flux[i], eflux[i], skybkg[i], eskybkg[i], _, photflag[i] = extract(scidata, xall[i], yall[i])
 
     return xall, yall, flux, eflux, skybkg, eskybkg, photflag
-
-
-def pca_model(pars, pca):
-    """Our Model"""
-
-    m = pars[0]
-    for i in range(len(pars)-1):
-        # print(i, pca[:, i+1])
-        m = m + pars[i+1]*pca[:, i]
-
-    # print(m)
-    return m
-
-
-def pca_func(pars, phot, pca, icut):
-    """Residuals"""
-
-    m = pca_model(pars, pca)
-    npt = len(phot)
-    diff = []
-    for i in range(npt):
-        if icut[i] == 0:
-            diff.append(phot[i] - m[i])
-        else:
-            diff.append(0)
-
-    return diff
 
 
 def match_points(current_points, prior_points, distance_cutoff):
