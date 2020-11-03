@@ -202,6 +202,26 @@ def darkprocess(workdir, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff,
     return scidata_cor
 
 
+def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):
+    """"""
+
+    data = image.flatten()
+    ref_data = ref_image.flatten()
+
+    mask = (data > mind) & (data < maxd) & (ref_data > mind) & (ref_data < maxd)
+
+    if np.sum(mask) > 10:
+        data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], 50)
+
+        x0 = [b1, m1, m2, tp]
+        ans = optimize.least_squares(ls_seg_func, x0, args=[data_bin, ref_data_bin, err_bin])
+
+        scaled_data = seg_func(ans.x, data)
+        scaled_image = scaled_data.reshape(image.shape)
+
+    return scaled_image
+
+
 def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):
     """
     mind,maxd : range of data to consider when matching frames.  Keeping maxd relatively low avoids stars
@@ -216,21 +236,11 @@ def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000
     ndark = len(alldarkdata)
     for i in range(1, ndark):
 
-        image1 = alldarkdata[i]
-        image2 = alldarkdata[0]
+        image = alldarkdata[i]
+        ref_image = alldarkdata[0]
 
-        data1 = image1.flatten()
-        data2 = image2.flatten()
-
-        mask = (data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)
-        if len(data1[mask]) > 10 and len(data2[mask]) > 10:
-            data1_bin, data2_bin, derr_bin = utils.bindata(data1[mask], data2[mask], 50)
-
-            x0 = [b1, m1, m2, tp]
-            ans = optimize.least_squares(ls_seg_func, x0, args=[data1_bin, data2_bin, derr_bin])
-            newdark = seg_func(ans.x, image1)
-            newdark = newdark.reshape([image1.shape[0], image1.shape[1]])
-            darkscaled.append(newdark)
+        newdark = scale_image(image, ref_image, mind=mind, maxd=maxd, b1=b1, m1=m1, m2=m2, tp=tp)
+        darkscaled.append(newdark)
 
     darkscaled = np.array(darkscaled)
     darkavg = np.median(darkscaled, axis=0)
@@ -575,24 +585,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         # scidata_cord = scidata_cor-(a+b*darkavg)
 
         # New Dark-correction. Not extensively tested. No Fortran dependence.
-        image1 = darkavg
-        image2 = scidata_cor
-        data1 = image1.flatten()
-        data2 = image2.flatten()
-
-        mind = 0
-        maxd = 8000
-        mask = (data1 > mind) & (data1 < maxd) & (data2 > mind) & (data2 < maxd)
-        data1_bin, data2_bin, derr_bin = utils.bindata(data1[mask], data2[mask], 50)
-
-        b1 = 100
-        m1 = 0.3
-        m2 = 1.3
-        tp = 2000
-        x0 = [b1, m1, m2, tp]
-        ans = optimize.least_squares(ls_seg_func, x0, args=[data1_bin, data2_bin, derr_bin])
-        newdark = seg_func(ans.x, darkavg)
-        newdark = newdark.reshape([darkavg.shape[0], darkavg.shape[1]])
+        newdark = scale_image(darkavg, scidata_cor)
         scidata_cord = scidata_cor - newdark
 
     # Return if only clipping and overscan is performed.
