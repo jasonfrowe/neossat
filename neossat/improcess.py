@@ -505,7 +505,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
     NAXIS2 = hdr['NAXIS2']
     hdul.close()
     # Set flags of what needs to be performed.
-    if not NAXIS1 == xsc or not NAXIS2 == ysc:
+    if not NAXIS2 == xsc or not NAXIS1 == ysc:
         cor = True
     if len(darkavg) != 0:
         dark = True
