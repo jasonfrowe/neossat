@@ -1112,7 +1112,7 @@ def photmain(workdir, outname, **kwargs):
     columns = (xall, yall, flux, eflux, skybkg, eskybkg, photflag)
     colnames = ('x', 'y', 'flux', 'eflux', 'skybkg', 'eskybkg', 'photflag')
     obs_table.add_columns(columns, names=colnames)
-    tablename = os.path.join(workdir, outname + '_phottable2.fits')
+    tablename = os.path.join(workdir, outname + '_photometry.fits')
     obs_table.write(tablename, overwrite=True)
 
     return
