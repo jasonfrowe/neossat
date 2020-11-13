@@ -16,6 +16,88 @@ from . import visualize
 from .photometry import Photometry
 
 
+def photo_centroid(scidata, bpix, starlist, ndp, dcoocon, itermax):
+    """"""
+
+    # scidata_masked = np.ma.array(scidata, mask=scidata < bpix)
+    starlist_cen = np.copy(starlist)
+    nstar = len(starlist)
+
+    for i in range(nstar):
+
+        xcoo = np.float(starlist[i][1])  # Get current centroid info and move into float.
+        ycoo = np.float(starlist[i][0])
+
+        dcoo = dcoocon + 1
+        niter = 0
+
+        while (dcoo > dcoocon) and (niter < itermax):
+
+            xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
+            ycoo1 = np.copy(ycoo)
+
+            # Update centroid.
+            j1 = int(xcoo) - ndp
+            j2 = int(xcoo) + ndp
+            k1 = int(ycoo) - ndp
+            k2 = int(ycoo) + ndp
+            sumx = 0.0
+            sumy = 0.0
+            fsum = 0.0
+            for j in range(j1, j2):  # TODO I think this can be done without the loops.
+                for k in range(k1, k2):
+                    sumx = sumx + scidata[j, k]*(j+1)
+                    sumy = sumy + scidata[j, k]*(k+1)
+                    fsum = fsum + scidata[j, k]
+
+            xcoo = sumx/fsum
+            ycoo = sumy/fsum
+
+            dxcoo = np.abs(xcoo - xcoo1)
+            dycoo = np.abs(ycoo - ycoo1)
+            dcoo = np.sqrt(dxcoo*dxcoo + dycoo*dycoo)
+
+            xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
+            ycoo1 = np.copy(ycoo)
+
+            niter = niter + 1
+
+            # print(dxcoo, dycoo, dcoo)
+
+        starlist_cen[i][1] = xcoo
+        starlist_cen[i][0] = ycoo
+
+    return starlist_cen
+
+
+def phot_simple(scidata, starlist, bpix, sbox, sky):
+    """"""
+
+    # Initialize array.
+    nstar = len(starlist)
+    boxsum = np.zeros(nstar)
+
+    # Mask bad pixels.
+    masked_scidata = np.ma.array(scidata, mask=scidata < bpix)
+
+    for i in range(nstar):
+
+        xcoo = np.float(starlist[i][1])  # Position of star.
+        ycoo = np.float(starlist[i][0])
+
+        j1 = int(xcoo) - sbox  # Dimensions of photometric box.
+        j2 = int(xcoo) + sbox
+        k1 = int(ycoo) - sbox
+        k2 = int(ycoo) + sbox
+
+        bsum = np.sum(masked_scidata[j1:j2, k1:k2])  # Total flux inside box.
+        npix = np.sum(masked_scidata[j1:j2, k1:k2]/masked_scidata[j1:j2, k1:k2])  # Number of pixels.
+
+        boxsum[i] = bsum - npix*sky  # Sky corrected flux measurement.
+
+    return boxsum
+
+
 def photprocess(filename, date, photap, bpix):
     """"""
 
@@ -30,6 +112,92 @@ def photprocess(filename, date, photap, bpix):
     phot_table = aperture_photometry(scidata - median, apertures)
 
     return [phot_table, date, mean, median, std, filename]
+
+
+def get_master_phot4all(workdir, lightlist, jddate, transall, master_phot_table, photap, bpix):
+    """"""
+
+    # Create arrays to store photometry.
+    photometry = []
+    photometry_jd = []
+
+    # Loop over all images.
+    for n2 in range(len(lightlist)):
+
+        # Get transformation matrix.
+        mat = np.array([[transall[n2][1][0][0], transall[n2][1][0][1]],
+                        [transall[n2][1][1][0], transall[n2][1][1][1]]])
+
+        if (np.abs(1.0-mat[0][0]) < 0.05) and (np.abs(1.0-mat[1][1]) < 0.05):  # Keep only sane transforms.
+
+            scidata = utils.read_fitsdata(os.path.join(workdir, lightlist[n2]))
+            mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
+
+            # Get centroids.
+            x2 = np.array(master_phot_table['xcenter'][:])
+            y2 = np.array(master_phot_table['ycenter'][:])
+            # Invert transformation matix.
+            invmat = np.linalg.inv(mat)
+            # Get copy of original sources.
+            # sources_new = np.copy(sources)
+
+            # Apply transformation.
+            xnew = -transall[n2][0][0] + invmat[0][0]*x2 + invmat[0][1]*y2
+            ynew = -transall[n2][0][1] + invmat[1][0]*x2 + invmat[1][1]*y2
+
+            positions_new = np.column_stack([xnew, ynew])
+            apertures_new = CircularAperture(positions_new, r=photap)
+            phot_table_new = aperture_photometry(scidata - median, apertures_new)
+
+            photometry_jd.append(jddate[n2])
+            photometry.append(phot_table_new)
+
+    photometry_jd = np.array(photometry_jd)
+
+    return photometry, photometry_jd
+
+
+def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=None):
+    """"""
+
+    if aper is None:
+        aper = 2.5 + 0.5 * np.arange(11)
+
+    if sky is None:
+        sky = np.array([10, 15])
+
+    # Get dimensions.
+    nimages = len(lightlist)
+    nstars = len(xref)
+    naper = len(aper)
+
+    # Create arrays.
+    xall = np.zeros((nimages, nstars))
+    yall = np.zeros((nimages, nstars))
+    flux = np.zeros((nimages, nstars, naper))
+    eflux = np.zeros((nimages, nstars, naper))
+    skybkg = np.zeros((nimages, nstars))
+    eskybkg = np.zeros((nimages, nstars))
+    photflag = np.zeros((nimages, nstars), dtype='uint8')
+
+    # Initialize photometric extraction.
+    extract = Photometry(aper, sky)  # TODO NEOSSat gain and badpix (saturated) values.
+
+    for i in range(nimages):
+
+        # Read the image.
+        scidata = utils.read_fitsdata(os.path.join(workdir, lightlist[i]))
+
+        # Compute star coordinates.
+        mat = rot[i]
+        invmat = np.linalg.inv(mat)
+
+        xall[i] = -offset[i, 0] + invmat[0, 0] * xref + invmat[0, 1] * yref
+        yall[i] = -offset[i, 1] + invmat[1, 0] * xref + invmat[1, 1] * yref
+
+        flux[i], eflux[i], skybkg[i], eskybkg[i], _, photflag[i] = extract(scidata, xall[i], yall[i])
+
+    return xall, yall, flux, eflux, skybkg, eskybkg, photflag
 
 
 def pca_model(pars, pca):
@@ -153,92 +321,6 @@ def get_pcavec(photometry_jd, photometry, exptime, minflux=0, id_exclude=None):
     print("bad/exclude list:", badlist)
 
     return pcavec
-
-
-def get_master_phot4all(workdir, lightlist, jddate, transall, master_phot_table, photap, bpix):
-    """"""
-
-    # Create arrays to store photometry.
-    photometry = []
-    photometry_jd = []
-
-    # Loop over all images.
-    for n2 in range(len(lightlist)):
-
-        # Get transformation matrix.
-        mat = np.array([[transall[n2][1][0][0], transall[n2][1][0][1]],
-                        [transall[n2][1][1][0], transall[n2][1][1][1]]])
-
-        if (np.abs(1.0-mat[0][0]) < 0.05) and (np.abs(1.0-mat[1][1]) < 0.05):  # Keep only sane transforms.
-
-            scidata = utils.read_fitsdata(os.path.join(workdir, lightlist[n2]))
-            mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
-
-            # Get centroids.
-            x2 = np.array(master_phot_table['xcenter'][:])
-            y2 = np.array(master_phot_table['ycenter'][:])
-            # Invert transformation matix.
-            invmat = np.linalg.inv(mat)
-            # Get copy of original sources.
-            # sources_new = np.copy(sources)
-
-            # Apply transformation.
-            xnew = -transall[n2][0][0] + invmat[0][0]*x2 + invmat[0][1]*y2
-            ynew = -transall[n2][0][1] + invmat[1][0]*x2 + invmat[1][1]*y2
-
-            positions_new = np.column_stack([xnew, ynew])
-            apertures_new = CircularAperture(positions_new, r=photap)
-            phot_table_new = aperture_photometry(scidata - median, apertures_new)
-
-            photometry_jd.append(jddate[n2])
-            photometry.append(phot_table_new)
-
-    photometry_jd = np.array(photometry_jd)
-
-    return photometry, photometry_jd
-
-
-def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=None):
-    """"""
-
-    if aper is None:
-        aper = 2.5 + 0.5 * np.arange(11)
-
-    if sky is None:
-        sky = np.array([10, 15])
-
-    # Get dimensions.
-    nimages = len(lightlist)
-    nstars = len(xref)
-    naper = len(aper)
-
-    # Create arrays.
-    xall = np.zeros((nimages, nstars))
-    yall = np.zeros((nimages, nstars))
-    flux = np.zeros((nimages, nstars, naper))
-    eflux = np.zeros((nimages, nstars, naper))
-    skybkg = np.zeros((nimages, nstars))
-    eskybkg = np.zeros((nimages, nstars))
-    photflag = np.zeros((nimages, nstars), dtype='uint8')
-
-    # Initialize photometric extraction.
-    extract = Photometry(aper, sky)  # TODO NEOSSat gain and badpix (saturated) values.
-
-    for i in range(nimages):
-
-        # Read the image.
-        scidata = utils.read_fitsdata(os.path.join(workdir, lightlist[i]))
-
-        # Compute star coordinates.
-        mat = rot[i]
-        invmat = np.linalg.inv(mat)
-
-        xall[i] = -offset[i, 0] + invmat[0, 0] * xref + invmat[0, 1] * yref
-        yall[i] = -offset[i, 1] + invmat[1, 0] * xref + invmat[1, 1] * yref
-
-        flux[i], eflux[i], skybkg[i], eskybkg[i], _, photflag[i] = extract(scidata, xall[i], yall[i])
-
-    return xall, yall, flux, eflux, skybkg, eskybkg, photflag
 
 
 def match_points(current_points, prior_points, distance_cutoff):
@@ -858,88 +940,6 @@ def orient(ax, ay, bx, by, cx, cy):
                 c = +1
 
     return c
-
-
-def photo_centroid(scidata, bpix, starlist, ndp, dcoocon, itermax):
-    """"""
-
-    # scidata_masked = np.ma.array(scidata, mask=scidata < bpix)
-    starlist_cen = np.copy(starlist)
-    nstar = len(starlist)
-
-    for i in range(nstar):
-
-        xcoo = np.float(starlist[i][1])  # Get current centroid info and move into float.
-        ycoo = np.float(starlist[i][0])
-
-        dcoo = dcoocon + 1
-        niter = 0
-
-        while (dcoo > dcoocon) and (niter < itermax):
-
-            xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
-            ycoo1 = np.copy(ycoo)
-
-            # Update centroid.
-            j1 = int(xcoo) - ndp
-            j2 = int(xcoo) + ndp
-            k1 = int(ycoo) - ndp
-            k2 = int(ycoo) + ndp
-            sumx = 0.0
-            sumy = 0.0
-            fsum = 0.0
-            for j in range(j1, j2):  # TODO I think this can be done without the loops.
-                for k in range(k1, k2):
-                    sumx = sumx + scidata[j, k]*(j+1)
-                    sumy = sumy + scidata[j, k]*(k+1)
-                    fsum = fsum + scidata[j, k]
-
-            xcoo = sumx/fsum
-            ycoo = sumy/fsum
-
-            dxcoo = np.abs(xcoo - xcoo1)
-            dycoo = np.abs(ycoo - ycoo1)
-            dcoo = np.sqrt(dxcoo*dxcoo + dycoo*dycoo)
-
-            xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
-            ycoo1 = np.copy(ycoo)
-
-            niter = niter + 1
-
-            # print(dxcoo, dycoo, dcoo)
-
-        starlist_cen[i][1] = xcoo
-        starlist_cen[i][0] = ycoo
-
-    return starlist_cen
-
-
-def phot_simple(scidata, starlist, bpix, sbox, sky):
-    """"""
-
-    # Initialize array.
-    nstar = len(starlist)
-    boxsum = np.zeros(nstar)
-
-    # Mask bad pixels.
-    masked_scidata = np.ma.array(scidata, mask=scidata < bpix)
-
-    for i in range(nstar):
-
-        xcoo = np.float(starlist[i][1])  # Position of star.
-        ycoo = np.float(starlist[i][0])
-
-        j1 = int(xcoo) - sbox  # Dimensions of photometric box.
-        j2 = int(xcoo) + sbox
-        k1 = int(ycoo) - sbox
-        k2 = int(ycoo) + sbox
-
-        bsum = np.sum(masked_scidata[j1:j2, k1:k2])  # Total flux inside box.
-        npix = np.sum(masked_scidata[j1:j2, k1:k2]/masked_scidata[j1:j2, k1:k2])  # Number of pixels.
-
-        boxsum[i] = bsum - npix*sky  # Sky corrected flux measurement.
-
-    return boxsum
 
 
 def flag_tracking(ra_vel, dec_vel, imgflag):  # TODO can RA_VEL/DEC_VEL be negative? If not this may not be the right criterion.
