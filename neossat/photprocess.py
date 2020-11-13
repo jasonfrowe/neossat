@@ -365,64 +365,156 @@ def match_points(current_points, prior_points, distance_cutoff):
     return matches
 
 
-def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
+def orient(ax, ay, bx, by, cx, cy):
     """"""
 
-    sortidx = np.argsort(f1)
-    maxf1 = f1[sortidx[np.max([len(f1)-n2m, 0])]]  # TODO use maximum instead of max.
+    c = 0  # If c stays as zero, then we missed a case!
 
-    sortidx = np.argsort(f2)
-    maxf2 = f2[sortidx[np.max([len(f2)-n2m, 0])]]  # TODO use maximum instead of max.
+    avgx = (ax+bx+cx)/3
+    avgy = (ay+by+cy)/3
 
-    mask1 = f1 > maxf1
-    mask2 = f2 > maxf2
+    # Discover quadrants for each point of triangle. TODO three identical code blocks, make function?
+    if (ax-avgx >= 0) and (ay-avgy >= 0): q1 = 1
+    if (ax-avgx >= 0) and (ay-avgy < 0): q1 = 2
+    if (ax-avgx < 0) and (ay-avgy < 0): q1 = 3
+    if (ax-avgx < 0) and (ay-avgy >= 0): q1 = 4
 
-    err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
-    if nm >= 3:
-        offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
-        success = True
-    else:
-        offset = np.array([0, 0])
-        rot = np.array([[1, 0],
-                        [0, 1]])
-        success = False
+    if (bx-avgx >= 0) and (by-avgy >= 0): q2 = 1
+    if (bx-avgx >= 0) and (by-avgy < 0): q2 = 2
+    if (bx-avgx < 0) and (by-avgy < 0): q2 = 3
+    if (bx-avgx < 0) and (by-avgy >= 0): q2 = 4
 
-    return offset, rot, success
+    if (cx-avgx >= 0) and (cy-avgy >= 0): q3 = 1
+    if (cx-avgx >= 0) and (cy-avgy < 0): q3 = 2
+    if (cx-avgx < 0) and (cy-avgy < 0): q3 = 3
+    if (cx-avgx < 0) and (cy-avgy >= 0): q3 = 4
 
+    if (q1 == 1) and (q2 == 2):  # TODO Again 3 identical blocks, make a function?
+        c = +1
+    elif (q1 == 1) and (q2 == 4):
+        c = -1
+    elif (q1 == 2) and (q2 == 3):
+        c = +1
+    elif (q1 == 2) and (q2 == 1):
+        c = -1
+    elif (q1 == 3) and (q2 == 4):
+        c = +1
+    elif (q1 == 3) and (q2 == 2):
+        c = -1
+    elif (q1 == 4) and (q2 == 1):
+        c = +1
+    elif (q1 == 4) and (q2 == 3):
+        c = -1
 
-def findtrans(nm, matches, x1, y1, x2, y2):
-    """"""
+    if c == 0:
+        if (q2 == 1) and (q3 == 2):
+            c = +1
+        elif (q2 == 1) and (q3 == 4):
+            c = -1
+        elif (q2 == 2) and (q3 == 3):
+            c = +1
+        elif (q2 == 2) and (q3 == 1):
+            c = -1
+        elif (q2 == 3) and (q3 == 4):
+            c = +1
+        elif (q2 == 3) and (q3 == 2):
+            c = -1
+        elif (q2 == 4) and (q3 == 1):
+            c = +1
+        elif (q2 == 4) and (q3 == 3):
+            c = -1
 
-    # Pre-allocate arrays.
-    # We are solving the problem A.x = b.
-    A = np.zeros([nm, 3])
-    bx = np.zeros(nm)
-    by = np.zeros(nm)
+    if c == 0:
+        if (q3 == 1) and (q1 == 2):
+            c = +1
+        elif (q3 == 1) and (q1 == 4):
+            c = -1
+        elif (q3 == 2) and (q1 == 3):
+            c = +1
+        elif (q3 == 2) and (q1 == 1):
+            c = -1
+        elif (q3 == 3) and (q1 == 4):
+            c = +1
+        elif (q3 == 3) and (q1 == 2):
+            c = -1
+        elif (q3 == 4) and (q1 == 1):
+            c = +1
+        elif (q3 == 4) and (q1 == 3):
+            c = -1
 
-    # Set up matricies.
-    A[:, 0] = 1
-    for n in range(nm):
-        A[n, 1] = x2[matches[n, 1]]
-        A[n, 2] = y2[matches[n, 1]]
-        bx[n] = x1[matches[n, 0]]
-        by[n] = y1[matches[n, 0]]
+    if (c == 0) and (q1 == q2):  # TODO And another block of three.
+        dydx1 = (ay-cy)/(ax-cx)
+        dydx2 = (by-cy)/(bx-cx)
+        if q1 == 1:
+            if dydx2 >= dydx1:
+                c = -1
+            else:
+                c = +1
+        elif q1 == 2:
+            if dydx2 >= dydx1:
+                c = -1
+            else:
+                c = +1
+        elif q1 == 3:
+            if dydx2 >= dydx1:
+                c = -1
+            else:
+                c = +1
+        elif q1 == 4:
+            if dydx2 >= dydx1:
+                c = -1
+            else:
+                c = +1
 
-    # Solve transformation with SVD.
-    u, s, vh = np.linalg.svd(A, full_matrices=False)
-    prd = np.transpose(vh)*1/s
-    prd = np.matmul(prd, np.transpose(u))
-    xoff = np.matmul(prd, bx)
-    yoff = np.matmul(prd, by)
+    if (c == 0) and (q2 == q3):
+        dydx1 = (by-ay)/(bx-ax)
+        dydx2 = (cy-ay)/(cx-ax)
+        if q2 == 1:
+            if dydx2 >= dydx1:
+                c = -1
+            else:
+                c = +1
+        elif q2 == 2:
+            if dydx2 >= dydx1:
+                c = -1
+            else:
+                c = +1
+        elif q2 == 3:
+            if dydx2 >= dydx1:
+                c = -1
+            else:
+                c = +1
+        elif q2 == 4:
+            if dydx2 >= dydx1:
+                c = -1
+            else:
+                c = +1
 
-    # Store our solution for output.
-    offset = np.array([xoff[0], yoff[0]])
-    rot = np.array([[xoff[1], xoff[2]],
-                    [yoff[1], yoff[2]]])
+    if (c == 0) and (q1 == q3):
+        dydx1 = (ay-by)/(ax-bx)
+        dydx2 = (cy-by)/(cx-bx)
+        if q3 == 1:
+            if dydx1 >= dydx2:
+                c = -1
+            else:
+                c = +1
+        elif q3 == 2:
+            if dydx1 >= dydx2:
+                c = -1
+            else:
+                c = +1
+        elif q3 == 3:
+            if dydx1 >= dydx2:
+                c = -1
+            else:
+                c = +1
+        elif q3 == 4:
+            if dydx1 >= dydx2:
+                c = -1
+            else:
+                c = +1
 
-    # print(offset)
-    # print(rot)
-
-    return offset, rot
+    return c
 
 
 def match(x1, y1, x2, y2, eps=1e-3):  # TODO this function could do with some clean-up.
@@ -790,156 +882,64 @@ def match(x1, y1, x2, y2, eps=1e-3):  # TODO this function could do with some cl
     return err, nm, matches
 
 
-def orient(ax, ay, bx, by, cx, cy):
+def findtrans(nm, matches, x1, y1, x2, y2):
     """"""
 
-    c = 0  # If c stays as zero, then we missed a case!
+    # Pre-allocate arrays.
+    # We are solving the problem A.x = b.
+    A = np.zeros([nm, 3])
+    bx = np.zeros(nm)
+    by = np.zeros(nm)
 
-    avgx = (ax+bx+cx)/3
-    avgy = (ay+by+cy)/3
+    # Set up matricies.
+    A[:, 0] = 1
+    for n in range(nm):
+        A[n, 1] = x2[matches[n, 1]]
+        A[n, 2] = y2[matches[n, 1]]
+        bx[n] = x1[matches[n, 0]]
+        by[n] = y1[matches[n, 0]]
 
-    # Discover quadrants for each point of triangle. TODO three identical code blocks, make function?
-    if (ax-avgx >= 0) and (ay-avgy >= 0): q1 = 1
-    if (ax-avgx >= 0) and (ay-avgy < 0): q1 = 2
-    if (ax-avgx < 0) and (ay-avgy < 0): q1 = 3
-    if (ax-avgx < 0) and (ay-avgy >= 0): q1 = 4
+    # Solve transformation with SVD.
+    u, s, vh = np.linalg.svd(A, full_matrices=False)
+    prd = np.transpose(vh)*1/s
+    prd = np.matmul(prd, np.transpose(u))
+    xoff = np.matmul(prd, bx)
+    yoff = np.matmul(prd, by)
 
-    if (bx-avgx >= 0) and (by-avgy >= 0): q2 = 1
-    if (bx-avgx >= 0) and (by-avgy < 0): q2 = 2
-    if (bx-avgx < 0) and (by-avgy < 0): q2 = 3
-    if (bx-avgx < 0) and (by-avgy >= 0): q2 = 4
+    # Store our solution for output.
+    offset = np.array([xoff[0], yoff[0]])
+    rot = np.array([[xoff[1], xoff[2]],
+                    [yoff[1], yoff[2]]])
 
-    if (cx-avgx >= 0) and (cy-avgy >= 0): q3 = 1
-    if (cx-avgx >= 0) and (cy-avgy < 0): q3 = 2
-    if (cx-avgx < 0) and (cy-avgy < 0): q3 = 3
-    if (cx-avgx < 0) and (cy-avgy >= 0): q3 = 4
+    # print(offset)
+    # print(rot)
 
-    if (q1 == 1) and (q2 == 2):  # TODO Again 3 identical blocks, make a function?
-        c = +1
-    elif (q1 == 1) and (q2 == 4):
-        c = -1
-    elif (q1 == 2) and (q2 == 3):
-        c = +1
-    elif (q1 == 2) and (q2 == 1):
-        c = -1
-    elif (q1 == 3) and (q2 == 4):
-        c = +1
-    elif (q1 == 3) and (q2 == 2):
-        c = -1
-    elif (q1 == 4) and (q2 == 1):
-        c = +1
-    elif (q1 == 4) and (q2 == 3):
-        c = -1
+    return offset, rot
 
-    if c == 0:
-        if (q2 == 1) and (q3 == 2):
-            c = +1
-        elif (q2 == 1) and (q3 == 4):
-            c = -1
-        elif (q2 == 2) and (q3 == 3):
-            c = +1
-        elif (q2 == 2) and (q3 == 1):
-            c = -1
-        elif (q2 == 3) and (q3 == 4):
-            c = +1
-        elif (q2 == 3) and (q3 == 2):
-            c = -1
-        elif (q2 == 4) and (q3 == 1):
-            c = +1
-        elif (q2 == 4) and (q3 == 3):
-            c = -1
 
-    if c == 0:
-        if (q3 == 1) and (q1 == 2):
-            c = +1
-        elif (q3 == 1) and (q1 == 4):
-            c = -1
-        elif (q3 == 2) and (q1 == 3):
-            c = +1
-        elif (q3 == 2) and (q1 == 1):
-            c = -1
-        elif (q3 == 3) and (q1 == 4):
-            c = +1
-        elif (q3 == 3) and (q1 == 2):
-            c = -1
-        elif (q3 == 4) and (q1 == 1):
-            c = +1
-        elif (q3 == 4) and (q1 == 3):
-            c = -1
+def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
+    """"""
 
-    if (c == 0) and (q1 == q2):  # TODO And another block of three.
-        dydx1 = (ay-cy)/(ax-cx)
-        dydx2 = (by-cy)/(bx-cx)
-        if q1 == 1:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q1 == 2:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q1 == 3:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q1 == 4:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
+    sortidx = np.argsort(f1)
+    maxf1 = f1[sortidx[np.max([len(f1)-n2m, 0])]]  # TODO use maximum instead of max.
 
-    if (c == 0) and (q2 == q3):
-        dydx1 = (by-ay)/(bx-ax)
-        dydx2 = (cy-ay)/(cx-ax)
-        if q2 == 1:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q2 == 2:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q2 == 3:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q2 == 4:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
+    sortidx = np.argsort(f2)
+    maxf2 = f2[sortidx[np.max([len(f2)-n2m, 0])]]  # TODO use maximum instead of max.
 
-    if (c == 0) and (q1 == q3):
-        dydx1 = (ay-by)/(ax-bx)
-        dydx2 = (cy-by)/(cx-bx)
-        if q3 == 1:
-            if dydx1 >= dydx2:
-                c = -1
-            else:
-                c = +1
-        elif q3 == 2:
-            if dydx1 >= dydx2:
-                c = -1
-            else:
-                c = +1
-        elif q3 == 3:
-            if dydx1 >= dydx2:
-                c = -1
-            else:
-                c = +1
-        elif q3 == 4:
-            if dydx1 >= dydx2:
-                c = -1
-            else:
-                c = +1
+    mask1 = f1 > maxf1
+    mask2 = f2 > maxf2
 
-    return c
+    err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
+    if nm >= 3:
+        offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
+        success = True
+    else:
+        offset = np.array([0, 0])
+        rot = np.array([[1, 0],
+                        [0, 1]])
+        success = False
+
+    return offset, rot, success
 
 
 def flag_tracking(ra_vel, dec_vel, imgflag):  # TODO can RA_VEL/DEC_VEL be negative? If not this may not be the right criterion.
