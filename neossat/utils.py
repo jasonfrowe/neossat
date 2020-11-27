@@ -30,12 +30,12 @@ def bindata(time, data, tbin):  # TODO it might be possible to clean this one up
     tmax = np.max(time)
     bins = np.array([int((t-tmin)/tbin) for t in time])
 
-    # nc = 0
     for b in range(np.max(bins)+1):
+
         npt = len(bins[bins == b])
-        # nc = nc + npt
+
         if npt > 3:
-            # print(npt)
+
             bint1 = np.median(time[bins == b])
             binf1 = np.median(data[bins == b])
             binfe = np.std(data[bins == b])/np.sqrt(npt)
@@ -48,18 +48,11 @@ def bindata(time, data, tbin):  # TODO it might be possible to clean this one up
     bin_flux = np.array(bin_flux)
     bin_ferr = np.array(bin_ferr)
 
-    # print(nc)
-
     return bin_time, bin_flux, bin_ferr
 
 
 def meddiff(x):
     """"""
-
-    # npt = len(x)
-    # dd = np.zeros(npt-1)
-    # for i in range(npt-1):
-    #     dd[i] = np.abs(x[i] - x[i-1])
 
     dd = np.abs(np.diff(x))
     dd_median = np.median(dd)
@@ -163,7 +156,6 @@ def cutoutliers(flux):
         if math.isnan(flux[i]):
             icut[i] = 1
 
-    # print(npt)
     for i in range(1, npt-1):
 
         i1 = np.max([0, i-nsampmax])
@@ -177,9 +169,6 @@ def cutoutliers(flux):
 
         if (np.abs(vp) > threshold) and (np.abs(vm) > threshold) and (vp/vm > 0):
             icut[i] = 1  # Cut data point.
-
-        # print(i, i1, i2, dd_median, icut[i])
-        # input()
 
     return icut
 
@@ -268,7 +257,7 @@ def observation_table(obspath, header_keys=None):
     # Get a list of all fits files in the specified directory.
     filelist = glob.glob(os.path.join(obspath, 'NEOS_*.fits'))
 
-    # Read all the headers TODO protect against corrupted files.
+    # Read all the headers.
     headers = []
     nfiles = len(filelist)
     trim = np.zeros((nfiles, 4), dtype=int)
@@ -278,6 +267,7 @@ def observation_table(obspath, header_keys=None):
     xov = np.zeros(nfiles, dtype=int)
     yov = np.zeros(nfiles, dtype=int)
     badidx = []
+
     for i, filename in enumerate(filelist):
 
         try:
