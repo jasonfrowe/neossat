@@ -113,7 +113,7 @@ def mmm(sky, minsky=20, maxiter=50, badpixval=None):
 
 class Photometry(object):
     
-    def __init__(self, aper, sky, phpadu=.62, badpixval=63000., quick_sky=False):
+    def __init__(self, aper, sky, phpadu=1.1, badpixval=63000., quick_sky=False):
         """ 
         Class for repeatedly performing aperture photometry.
             

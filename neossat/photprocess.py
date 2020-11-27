@@ -181,7 +181,7 @@ def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=N
     photflag = np.zeros((nimages, nstars), dtype='uint8')
 
     # Initialize photometric extraction.
-    extract = Photometry(aper, sky)  # TODO NEOSSat gain and badpix (saturated) values.
+    extract = Photometry(aper, sky)
 
     for i in range(nimages):
 
