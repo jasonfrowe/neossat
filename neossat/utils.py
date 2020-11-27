@@ -1,6 +1,7 @@
 import os
 import glob
 import re
+from collections import namedtuple
 
 import math
 import numpy as np
@@ -66,27 +67,37 @@ def meddiff(x):
     return dd_median
 
 
-def imagestat(scidata, bpix):
-    """"""
+ImStat = namedtuple('ImStat', ['minval', 'maxval', 'mean', 'stddev', 'median'])
 
-    it = 5  # Number of iterations to chop out outliers. TODO should be optional argument.
 
-    mask = scidata > bpix
-    minp = np.min(scidata[mask])
-    maxp = np.max(scidata[mask])
-    mean = np.mean(scidata[mask])
-    std = np.std(scidata[mask])
-    median = np.median(scidata[mask])
+def imagestat(image, bpix=None, maxiter=5, nsigma=3.0):
+    """Get statistics on an input image."""
 
-    for i in range(it):
+    if bpix is None:
+        mask1 = np.ones_like(image, dtype='bool')
+    else:
+        mask1 = image > bpix
 
-        mask = (scidata > bpix) & (np.abs(scidata - median) < 3.0*std)
+    # Get minimum and maximum values.
+    minp = np.min(image[mask1])
+    maxp = np.max(image[mask1])
 
-        mean = np.mean(scidata[mask])
-        std = np.std(scidata[mask])
-        median = np.median(scidata[mask])
+    # First pass at mean, median and standard deviation.
+    mean = np.mean(image[mask1])
+    stddev = np.std(image[mask1])
+    median = np.median(image[mask1])
 
-    imstat = np.array([minp, maxp, mean, std, median])  # TODO change to dict, no need to remember positions.
+    # Iterate on mean, median and standard deviation.
+    for niter in range(maxiter):
+
+        mask = mask1 & (np.abs(image - median) < nsigma*stddev)
+
+        mean = np.mean(image[mask])
+        stddev = np.std(image[mask])
+        median = np.median(image[mask])
+
+    # Return results as a namedtuple.
+    imstat = ImStat(minp, maxp, mean, stddev, median)
 
     return imstat
 
