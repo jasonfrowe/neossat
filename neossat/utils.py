@@ -3,7 +3,6 @@ import glob
 import re
 from collections import namedtuple
 
-import math
 import numpy as np
 
 from astropy.io import fits
@@ -111,7 +110,7 @@ def replaceoutlier(flux, icut):
             if len(samps[icut[i1:i2] == 0]) > 1:
                 median = np.median(samps[icut[i1:i2] == 0])
                 # print(i, i1, i2, median)
-                if math.isnan(median):
+                if np.isnan(median):
                     flux[i] = gmedian
                 else:
                     flux[i] = median
@@ -152,9 +151,8 @@ def cutoutliers(flux):
     nsampmax = 25  # Number of nearby samples for stats.
     sigma = 3.0  # Threshold for removing outliers.
 
-    for i in range(npt):
-        if math.isnan(flux[i]):
-            icut[i] = 1
+    mask = np.isnan(flux)
+    icut[mask] = 1
 
     for i in range(1, npt-1):
 
