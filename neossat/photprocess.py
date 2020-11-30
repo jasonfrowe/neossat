@@ -682,19 +682,16 @@ def findtrans(nm, matches, x1, y1, x2, y2, maxiter=5, nstd=3.0):
 def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
     """"""
 
-    sortidx = np.argsort(f1)
-    maxf1 = f1[sortidx[np.max([len(f1)-n2m, 0])]]  # TODO use maximum instead of max.
+    # Select the n2m brightest object in each set of coordinates.
+    ibright1 = np.argsort(-f1)[:n2m]
+    ibright2 = np.argsort(-f2)[:n2m]
 
-    sortidx = np.argsort(f2)
-    maxf2 = f2[sortidx[np.max([len(f2)-n2m, 0])]]  # TODO use maximum instead of max.
+    # Match coordinates.
+    err, nm, matches = match(x1[ibright1], y1[ibright1], x2[ibright2], y2[ibright2])
 
-    mask1 = f1 > maxf1
-    mask2 = f2 > maxf2
-
-    err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
-
+    # Compute the best affine transformation between coordinates.
     if nm >= 3:
-        offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
+        offset, rot = findtrans(nm, matches, x1[ibright1], y1[ibright1], x2[ibright2], y2[ibright2])
         success = True
     else:
         offset = np.array([0, 0])
