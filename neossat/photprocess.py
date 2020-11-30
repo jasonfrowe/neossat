@@ -98,20 +98,27 @@ def phot_simple(scidata, starlist, bpix, sbox, sky):
     return boxsum
 
 
-def photprocess(filename, date, photap, bpix):
+def photprocess(filename, date, photap, bpix, margin=10):
     """"""
 
     scidata = utils.read_fitsdata(filename)
 
-    mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
-    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
-    sources = daofind(scidata - median)
+    mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
+    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*stddev, exclude_border=True)
+
+    mask = np.zeros_like(scidata, dtype='bool')
+    mask[:margin] = True
+    mask[-margin:] = True
+    mask[:, :margin] = True
+    mask[:, -margin:] = True
+
+    sources = daofind(scidata - median, mask=mask)
 
     positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
     apertures = CircularAperture(positions, r=photap)
     phot_table = aperture_photometry(scidata - median, apertures)
 
-    return [phot_table, date, mean, median, std, filename]
+    return [phot_table, date, mean, median, stddev, filename]
 
 
 def get_master_phot4all(workdir, lightlist, jddate, transall, master_phot_table, photap, bpix):
@@ -131,7 +138,7 @@ def get_master_phot4all(workdir, lightlist, jddate, transall, master_phot_table,
         if (np.abs(1.0-mat[0][0]) < 0.05) and (np.abs(1.0-mat[1][1]) < 0.05):  # Keep only sane transforms.
 
             scidata = utils.read_fitsdata(os.path.join(workdir, lightlist[n2]))
-            mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
+            mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
 
             # Get centroids.
             x2 = np.array(master_phot_table['xcenter'][:])
@@ -195,6 +202,7 @@ def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=N
         xall[i] = -offset[i, 0] + invmat[0, 0] * xref + invmat[0, 1] * yref
         yall[i] = -offset[i, 1] + invmat[1, 0] * xref + invmat[1, 1] * yref
 
+        # Extract the aperture photometry.
         flux[i], eflux[i], skybkg[i], eskybkg[i], _, photflag[i] = extract(scidata, xall[i], yall[i])
 
     return xall, yall, flux, eflux, skybkg, eskybkg, photflag
@@ -930,6 +938,7 @@ def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
     mask2 = f2 > maxf2
 
     err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
+
     if nm >= 3:
         offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
         success = True
@@ -942,23 +951,23 @@ def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
     return offset, rot, success
 
 
-def flag_tracking(ra_vel, dec_vel, imgflag):  # TODO can RA_VEL/DEC_VEL be negative? If not this may not be the right criterion.
+def flag_tracking(ra_vel, dec_vel, imgflag, nstd=3.0):
     """"""
 
     # Find RA_VEL outliers.
     _, median, stddev = sigma_clipped_stats(ra_vel)
-    mask = np.abs(ra_vel - median) < 5*stddev
+    mask = np.abs(ra_vel - median) < nstd*stddev
     imgflag = np.where(mask, imgflag, imgflag + 1)
 
     # Find DEC_VEL outliers.
     _, median, stddev = sigma_clipped_stats(dec_vel)
-    mask = np.abs(dec_vel - median) < 5*stddev
+    mask = np.abs(dec_vel - median) < nstd*stddev
     imgflag = np.where(mask, imgflag, imgflag + 2)
 
     return imgflag
 
 
-def flag_transforms(offset, rot, success, imgflag):
+def flag_transforms(offset, rot, success, imgflag, nstd=3.0):
     """"""
 
     # Flag transformations where the matching failed.
@@ -979,7 +988,7 @@ def flag_transforms(offset, rot, success, imgflag):
         stddev = np.sqrt(np.mean(radius_sq))
         radius = np.sqrt(radius_sq)
 
-        mask = radius < 5*stddev
+        mask = radius < nstd*stddev
 
     imgflag = np.where(mask, imgflag, imgflag + 16)
 
@@ -1091,21 +1100,26 @@ def photmain(workdir, outname, **kwargs):
     scidata = np.copy(image_med)
     imstat = utils.imagestat(scidata, bpix)
 
-    mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
-    daofind = DAOStarFinder(fwhm=2.0, threshold=3. * std)
-    sources = daofind(scidata - median)
+    mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
+    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*stddev, exclude_border=True)
 
-    positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
-    apertures = CircularAperture(positions, r=photap)
-    master_phot_table = aperture_photometry(scidata - median, apertures)
+    # TODO Clean this up a bit.
+    margin = 10
+    mask = np.zeros_like(scidata, dtype='bool')
+    mask[:margin] = True
+    mask[-margin:] = True
+    mask[:, :margin] = True
+    mask[:, -margin:] = True
+
+    sources = daofind(scidata - median, mask=mask)
 
     figname = os.path.join(workdir, outname + '_masterimage.png')
     visualize.plot_image_wsource(scidata, imstat, 1.0, 50.0, sources, figname=figname, display=False)
 
     # Extract photometry.
     print('Extracting photometry.')
-    xref = np.array(master_phot_table['xcenter'][:])
-    yref = np.array(master_phot_table['ycenter'][:])
+    xref = np.array(sources['xcentroid'][:])
+    yref = np.array(sources['ycentroid'][:])
     xall, yall, flux, eflux, skybkg, eskybkg, photflag = get_photometry(workdir, obs_table['FILENAME'], xref, yref, obs_table['offset'], obs_table['rot'])
 
     # Save the output.
