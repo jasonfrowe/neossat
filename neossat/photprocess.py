@@ -718,7 +718,7 @@ def flag_tracking(ra_vel, dec_vel, imgflag, nstd=3.0):
     return imgflag
 
 
-def flag_transforms(offset, rot, success, imgflag, nstd=3.0):
+def flag_transforms(offset, rot, success, imgflag, nstd=3.0, maxiter=5):
     """"""
 
     # Flag transformations where the matching failed.
@@ -730,13 +730,13 @@ def flag_transforms(offset, rot, success, imgflag, nstd=3.0):
 
     # Flag bad offsets.
     mask = imgflag < 1  # Start by using only the currently unflagged images.
-    for i in range(5):
+    for niter in range(maxiter):
 
-        xmed = np.nanmean(offset[mask, 0])
-        ymed = np.nanmean(offset[mask, 1])
+        xmed = np.nanmedian(offset[mask, 0])
+        ymed = np.nanmedian(offset[mask, 1])
         radius_sq = (offset[:, 0] - xmed)**2 + (offset[:, 1] - ymed)**2
 
-        stddev = np.sqrt(np.mean(radius_sq))
+        stddev = np.sqrt(np.mean(radius_sq[mask]))
         radius = np.sqrt(radius_sq)
 
         mask = radius < nstd*stddev
