@@ -3,9 +3,7 @@ import multiprocessing as mp
 
 import tqdm
 import numpy as np
-from scipy import optimize
 from scipy import spatial
-from scipy.linalg import lapack
 from skimage import transform
 
 from astropy.stats import sigma_clipped_stats
