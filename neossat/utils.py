@@ -62,7 +62,7 @@ def meddiff(x):
 ImStat = namedtuple('ImStat', ['minval', 'maxval', 'mean', 'stddev', 'median'])
 
 
-def imagestat(image, bpix=None, maxiter=5, nsigma=3.0):
+def imagestat(image, bpix=None, maxiter=5, nstd=3.0):
     """Get statistics on an input image."""
 
     if bpix is None:
@@ -82,7 +82,7 @@ def imagestat(image, bpix=None, maxiter=5, nsigma=3.0):
     # Iterate on mean, median and standard deviation.
     for niter in range(maxiter):
 
-        mask = mask1 & (np.abs(image - median) < nsigma*stddev)
+        mask = mask1 & (np.abs(image - median) < nstd*stddev)
 
         mean = np.mean(image[mask])
         stddev = np.std(image[mask])
@@ -103,41 +103,44 @@ def replaceoutlier(flux, icut):
     npt = len(flux)
 
     for i in range(npt):
+
         if icut[i] != 0:
-            i1 = np.max([0, i-nsampmax])
-            i2 = np.min([npt-1, i+nsampmax])
+
+            i1 = np.maximum(0, i-nsampmax)
+            i2 = np.minimum(npt-1, i+nsampmax)
             samps = flux[i1:i2]
+
             if len(samps[icut[i1:i2] == 0]) > 1:
+
                 median = np.median(samps[icut[i1:i2] == 0])
-                # print(i, i1, i2, median)
+
                 if np.isnan(median):
                     flux[i] = gmedian
                 else:
                     flux[i] = median
+
             else:
                 flux[i] = gmedian
 
     return flux
 
 
-def sigclip(flux, icut):
+def sigclip(flux, icut=None, nstd=3.0, maxiter=3):
     """"""
 
-    # Global Sigma clipping.
-    npt = len(flux)
-    icut2 = np.zeros(npt, dtype='int')
+    if icut is None:
+        icut = np.zeros_like(flux, dtype='int')
 
-    stdcut = 3.0
-    niter = 3
-    for i in range(niter):
+    icut2 = np.zeros_like(flux, dtype='int')
+
+    # Global sigma-clipping.
+    for niter in range(maxiter):
+
         mask = (icut2 == 0) & (icut == 0)
         mean = np.mean(flux[mask])
-        std = np.std(flux[mask])
-        # print(mean, std)
-        for j in range(npt):
-            if np.abs(flux[j] - mean) > stdcut*std:
-                icut2[j] = 1
-        # print(np.sum(icut2))
+        stddev = np.std(flux[mask])
+
+        icut2 = np.where(np.abs(flux - mean) > nstd*stddev, 1, icut2)
 
     return icut2
 
@@ -171,30 +174,6 @@ def cutoutliers(flux):
     return icut
 
 
-def getimage_dim(filename):
-    """"""
-
-    header = fits.getheader(filename)
-
-    trimsec = header['TRIMSEC']
-    trim = re.findall(r'\d+', trimsec)
-
-    btrimsec = header['BIASSEC']
-    btrim = re.findall(r'\d+', btrimsec)
-
-    n = len(trim)
-    for i in range(n):
-        trim[i] = int(trim[i])
-        btrim[i] = int(btrim[i])
-
-    xsc = int(trim[3]) - int(trim[2]) + 1  # TODO seems like we're doubling down on the ints here.
-    ysc = int(trim[1]) - int(trim[0]) + 1
-    xov = int(btrim[3]) - int(btrim[2]) + 1  # I ignore the last few columns.
-    yov = int(btrim[1]) - int(btrim[0]) - 3
-
-    return trim, btrim, xsc, ysc, xov, yov
-
-
 def parse_image_dim(header):
     """"""
 
@@ -209,7 +188,7 @@ def parse_image_dim(header):
         trim[i] = int(trim[i])
         btrim[i] = int(btrim[i])
 
-    xsc = int(trim[3]) - int(trim[2]) + 1  # TODO seems like we're doubling down on the ints here.
+    xsc = int(trim[3]) - int(trim[2]) + 1
     ysc = int(trim[1]) - int(trim[0]) + 1
     xov = int(btrim[3]) - int(btrim[2]) + 1  # I ignore the last few columns.
     yov = int(btrim[1]) - int(btrim[0]) - 3
@@ -217,18 +196,29 @@ def parse_image_dim(header):
     return trim, btrim, xsc, ysc, xov, yov
 
 
+def getimage_dim(filename):
+    """"""
+
+    header = fits.getheader(filename)
+
+    trim, btrim, xsc, ysc, xov, yov = parse_image_dim(header)
+
+    return trim, btrim, xsc, ysc, xov, yov
+
+
 def read_fitsdata(filename):
     """Usage scidata = read_fitsdata(filename)"""
 
-    hdulist = fits.open(filename)  # Open the FITS file.
-    scidata = hdulist[0].data  # Extract the Image.
-    scidata_float = scidata.astype(float)
-    hdulist.close()  # TODO use getdata or with statement.
+    # Read the image.
+    scidata = fits.getdata(filename)
+
+    # Convert to float.
+    scidata_float = scidata.astype('float64')
 
     return scidata_float
 
 
-def read_file_list(filelist):  # TODO might work easier with astropy.io.ascii
+def read_file_list(filelist):
     """Usage files = read_file_list(filelist)"""
 
     files = []  # Initialize list to contain filenames for darks.
@@ -319,17 +309,21 @@ def observation_table(obspath, header_keys=None):
 def parse_observation_table(obs_table, target, ela_tol=15., sun_tol=20.):
     """ Split a table of observations into observations of a specific object and corresponding darks"""
 
+    # Find good observations of the target.
     mask = (obs_table['OBJECT'] == target) & (obs_table['shutter'] == 0) & \
            ((obs_table['mode'] == 16) | (obs_table['mode'] == 13)) & \
            (obs_table['ELA_MIN'] > ela_tol) & (obs_table['SUN_MIN'] > sun_tol)
+
     if not np.any(mask):
         raise ValueError('Table does not contain valid observations of ' + target)
 
     light_table = obs_table[mask]
-    xsc, ysc = light_table[0]['xsc'], light_table[0]['ysc']
 
+    # Find good darks matching the observations of the target.
+    xsc, ysc = light_table[0]['xsc'], light_table[0]['ysc']
     mask = (obs_table['OBJECT'] == 'DARK') & (obs_table['shutter'] == 1) & \
            (obs_table['xsc'] == xsc) & (obs_table['ysc'] == ysc)
+
     if not np.any(mask):
         raise ValueError('No valid darks found for observations of ' + target)
 
