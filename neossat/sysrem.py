@@ -1,5 +1,8 @@
 import numpy as np
 
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
 from . import utils
 
 
@@ -25,7 +28,17 @@ def whiten_photometry(photometry):
     return photometry.squeeze(), icut.squeeze()
 
 
-def sysrem_1comp(data, error, maxiter=20):
+def normalize_photometry(photometry):
+    """"""
+
+    norm = np.median(photometry, axis=0)
+    photometry = photometry/norm
+
+    return photometry, norm
+
+
+def _sysrem_1comp(data, error, maxiter=20):
+    """Fit a single SysRem component to the data."""
 
     nrows, ncols = data.shape
     weights = 1/error**2
@@ -79,6 +92,46 @@ def sysrem_photcor(flux, eflux, pcavec, npca, mean_model=None, mask=None):
     # Fit the best PCA model to the flux.
     mat = np.column_stack([mean_model, pcavec[:, :npca]])
     pars = np.linalg.lstsq(mat[mask]/eflux[mask, np.newaxis], flux[mask]/eflux[mask], rcond=None)[0]
+
+    # Evaluate the PCA model and get the corrected flux.
+    totmodel = np.sum(pars*mat, axis=1)
+    pcamodel = np.sum(pars[1:]*mat[:, 1:], axis=1)
+    corflux = (flux - pcamodel)/pars[0]
+
+    return corflux, totmodel, pcamodel
+
+
+def get_pcavec(data, nvec=None, scale_data=False):
+    """"""
+
+    nrows, ncols = data.shape
+
+    if nvec is None:
+        nvec = ncols
+
+    if scale_data:
+        # Scale the data to have mean=0 and stddev=1.
+        data = StandardScaler().fit_transform(data)
+
+    # Compute the PCA basis vectors.
+    pca = PCA(n_components=nvec)
+    vectors = pca.fit_transform(data)
+
+    return vectors
+
+
+def pca_photcor(flux, pcavec, npca, mean_model=None, mask=None):
+    """Use a set of PCA basis vectors to model the flux."""
+
+    if mean_model is None:
+        mean_model = np.ones_like(flux)
+
+    if mask is None:
+        mask = np.ones_like(flux, dtype='bool')
+
+    # Fit the best model to the flux.
+    mat = np.column_stack([mean_model, pcavec[:, :npca]])
+    pars = np.linalg.lstsq(mat[mask], flux[mask], rcond=None)[0]
 
     # Evaluate the PCA model and get the corrected flux.
     totmodel = np.sum(pars*mat, axis=1)
