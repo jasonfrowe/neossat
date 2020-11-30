@@ -1,5 +1,29 @@
 import numpy as np
 
+from . import utils
+
+
+def whiten_photometry(photometry):
+    """"""
+
+    if photometry.ndim == 1:
+        photometry = np.atleast_2d(photometry).T
+
+    npoints, nstars = photometry.shape
+
+    icut = np.zeros_like(photometry, dtype='int')
+    for istar in range(nstars):
+
+        col = photometry[:, istar]
+
+        icut1 = utils.cutoutliers(col)
+        icut2 = utils.sigclip(col, icut1)
+        icut[:, istar] = icut1 + icut2
+
+        photometry[:, istar] = utils.replaceoutlier(col, icut[:, istar])
+
+    return photometry.squeeze(), icut.squeeze()
+
 
 def sysrem_1comp(data, error, maxiter=20):
 
