@@ -890,37 +890,41 @@ def match(x1, y1, x2, y2, eps=1e-3):  # TODO this function could do with some cl
     return err, nm, matches
 
 
-def findtrans(nm, matches, x1, y1, x2, y2):
+def findtrans(nm, matches, x1, y1, x2, y2, maxiter=5, nstd=3.0):
     """"""
 
-    # Pre-allocate arrays.
-    # We are solving the problem A.x = b.
-    A = np.zeros([nm, 3])
-    bx = np.zeros(nm)
-    by = np.zeros(nm)
-
     # Set up matricies.
-    A[:, 0] = 1
-    for n in range(nm):
-        A[n, 1] = x2[matches[n, 1]]
-        A[n, 2] = y2[matches[n, 1]]
-        bx[n] = x1[matches[n, 0]]
-        by[n] = y1[matches[n, 0]]
+    A = np.ones((nm, 3))
+    A[:, 1] = x2[matches[:nm, 1]]
+    A[:, 2] = y2[matches[:nm, 1]]
+    bx = x1[matches[:nm, 0]]
+    by = y1[matches[:nm, 0]]
 
-    # Solve transformation with SVD.
-    u, s, vh = np.linalg.svd(A, full_matrices=False)
-    prd = np.transpose(vh)*1/s
-    prd = np.matmul(prd, np.transpose(u))
-    xoff = np.matmul(prd, bx)
-    yoff = np.matmul(prd, by)
+    mask = np.ones_like(bx, dtype='bool')
+    for niter in range(maxiter):
+
+        xpars = np.linalg.lstsq(A[mask], bx[mask], rcond=None)[0]
+        ypars = np.linalg.lstsq(A[mask], by[mask], rcond=None)[0]
+
+        # Compute residuals.
+        resx = bx - np.sum(A*xpars, axis=1)
+        resy = by - np.sum(A*ypars, axis=1)
+        dist_sq = resx**2 + resy**2
+
+        # Mask outliers.
+        stddev = np.sqrt(np.mean(dist_sq))
+        dist = np.sqrt(dist_sq)
+        mask_new = dist < nstd*stddev
+
+        if np.all(mask == mask_new):
+            break
+
+        mask = mask_new
 
     # Store our solution for output.
-    offset = np.array([xoff[0], yoff[0]])
-    rot = np.array([[xoff[1], xoff[2]],
-                    [yoff[1], yoff[2]]])
-
-    # print(offset)
-    # print(rot)
+    offset = np.array([xpars[0], ypars[0]])
+    rot = np.array([[xpars[1], xpars[2]],
+                    [ypars[1], ypars[2]]])
 
     return offset, rot
 
