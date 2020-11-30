@@ -999,7 +999,7 @@ def flag_transforms(offset, rot, success, imgflag, nstd=3.0):
     return imgflag
 
 
-def photmain(workdir, outname, **kwargs):
+def extract_photometry(workdir, outname, **kwargs):
     """"""
 
     bpix = kwargs.pop('bpix', -1.0e10)
@@ -1137,4 +1137,4 @@ def photmain(workdir, outname, **kwargs):
 
 
 if __name__ == '__main__':
-    photmain()
+    extract_photometry()
