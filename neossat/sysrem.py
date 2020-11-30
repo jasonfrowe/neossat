@@ -6,27 +6,59 @@ def sysrem_1comp(data, error, maxiter=20):
     nrows, ncols = data.shape
     weights = 1/error**2
 
-    component = np.ones(ncols)
+    amplitude = np.ones(ncols)
     for niter in range(maxiter):
 
-        amplitude = np.sum(weights*component*data, axis=1)/np.sum(weights*(component**2), axis=1)
-        component = np.sum(weights*amplitude[:,np.newaxis]*data, axis=0)/np.sum(weights*(amplitude**2)[:,np.newaxis], axis=0)
+        component = np.sum(weights*amplitude*data, axis=1)/np.sum(weights*(amplitude**2), axis=1)
+        amplitude = np.sum(weights*component[:, np.newaxis]*data, axis=0)/np.sum(weights*(component**2)[:, np.newaxis], axis=0)
 
-    return amplitude, component
+    norm = np.amax(amplitude)
+    component = component*norm
+    amplitude = amplitude/norm
+
+    return component, amplitude
 
 
-def sysrem(data, error, ncomponents, maxiter=20):
+def sysrem(data, error, nvec=None, maxiter=20):
+    """Run the SysRem algorithm on the data."""
 
     nrows, ncols = data.shape
 
-    amplitudes = np.zeros((ncomponents, nrows))
-    components = np.zeros((ncomponents, ncols))
+    if nvec is None:
+        nvec = ncols
 
-    model = 0
-    for i in range(ncomponents):
+    # Subtract weighted means from the data.
+    means = np.sum(data/error**2, axis=0)/np.sum(1/error**2, axis=0)
+    data = data - means
 
-        amplitudes[i], components[i] = sysrem_1comp(data - model, error, maxiter=maxiter)
+    model = 0.0
+    components = np.zeros((nrows, nvec))
+    amplitudes = np.zeros((nvec, ncols))
+    for i in range(nvec):
 
-        model = model + np.outer(amplitudes[i], components[i])
+        components[:, i], amplitudes[i] = _sysrem_1comp(data - model, error, maxiter=maxiter)
 
-    return amplitudes, components
+        model = np.matmul(components, amplitudes)
+
+    return components, amplitudes, means, model
+
+
+def sysrem_photcor(flux, eflux, pcavec, npca, mean_model=None, mask=None):
+    """Fit a set of SysRem vectors to the data."""
+
+    if mean_model is None:
+        mean_model = np.ones_like(flux)
+
+    if mask is None:
+        mask = np.ones_like(flux, dtype='bool')
+
+    # Fit the best PCA model to the flux.
+    mat = np.column_stack([mean_model, pcavec[:, :npca]])
+    pars = np.linalg.lstsq(mat[mask]/eflux[mask, np.newaxis], flux[mask]/eflux[mask], rcond=None)[0]
+
+    # Evaluate the PCA model and get the corrected flux.
+    totmodel = np.sum(pars*mat, axis=1)
+    pcamodel = np.sum(pars[1:]*mat[:, 1:], axis=1)
+    corflux = (flux - pcamodel)/pars[0]
+
+    return corflux, totmodel, pcamodel
