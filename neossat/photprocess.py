@@ -849,7 +849,6 @@ def extract_photometry(workdir, outname, **kwargs):
     # Create master photometry list.
     print('Creating master photometry list.')
     scidata = np.copy(image_med)
-    imstat = utils.imagestat(scidata, bpix)
 
     mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
     daofind = DAOStarFinder(fwhm=2.0, threshold=5.*stddev, exclude_border=True)
@@ -864,6 +863,8 @@ def extract_photometry(workdir, outname, **kwargs):
 
     sources = daofind(scidata - median, mask=mask)
 
+    # Plot the masterimage.
+    imstat = utils.imagestat(scidata, bpix)
     figname = os.path.join(workdir, outname + '_masterimage.png')
     visualize.plot_image_wsource(scidata, imstat, 1.0, 50.0, sources, figname=figname, display=False)
 
