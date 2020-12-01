@@ -293,7 +293,7 @@ class Photometry(object):
                 
                 # Error on the flux measurement.
                 error1 = area*skystd**2
-                error2 = flux[i, j]/self.phpadu
+                error2 = np.abs(flux[i, j])/self.phpadu
                 error3 = sigsq*area**2
                 
                 eflux[i, j] = np.sqrt(error1 + error2 + error3)
