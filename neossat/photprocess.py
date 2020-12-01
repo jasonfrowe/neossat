@@ -14,10 +14,8 @@ from . import visualize
 from .photometry import Photometry
 
 
-def photprocess(filename, date, photap, bpix, margin=10):
-    """"""
-
-    scidata = utils.read_fitsdata(filename)
+def find_sources(scidata, margin=10):
+    """Detect stars in the science image."""
 
     mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
     daofind = DAOStarFinder(fwhm=2.0, threshold=5.*stddev, exclude_border=True)
@@ -30,11 +28,21 @@ def photprocess(filename, date, photap, bpix, margin=10):
 
     sources = daofind(scidata - median, mask=mask)
 
+    return sources
+
+
+def photprocess(scidata, date, photap, bpix, margin=10):
+    """"""
+
+    sources = find_sources(scidata, margin=margin)
+
     positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
     apertures = CircularAperture(positions, r=photap)
+
+    mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
     phot_table = aperture_photometry(scidata - median, apertures)
 
-    return [phot_table, date, mean, median, stddev, filename]
+    return [phot_table, date, mean, median, stddev]
 
 
 def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=None):
@@ -752,6 +760,7 @@ def extract_photometry(workdir, outname, **kwargs):
     bpix = kwargs.pop('bpix', -1.0e10)
     nproc = kwargs.pop('nproc', 4)
     photap = kwargs.pop('photap', 4)
+    margin = kwargs.pop('margin', 10)
 
     obs_table = utils.observation_table(workdir, header_keys=['RA_VEL', 'DEC_VEL', 'CCD-TEMP'])
     nobs = len(obs_table)
@@ -765,10 +774,12 @@ def extract_photometry(workdir, outname, **kwargs):
     results = []
     with mp.Pool(nproc) as p:
         for i in range(nobs):
-            filename = os.path.join(workdir, obs_table['FILENAME'][i])
-            jd_obs = obs_table['JD-OBS'][i]
 
-            args = (filename, jd_obs, photap, bpix)
+            date = obs_table['JD-OBS'][i]
+            filename = os.path.join(workdir, obs_table['FILENAME'][i])
+            scidata = utils.read_fitsdata(filename)
+
+            args = (scidata, date, photap, bpix)
 
             results.append(p.apply_async(photprocess, args=args, callback=lambda x: pbar.update()))
 
@@ -849,19 +860,7 @@ def extract_photometry(workdir, outname, **kwargs):
     # Create master photometry list.
     print('Creating master photometry list.')
     scidata = np.copy(image_med)
-
-    mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
-    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*stddev, exclude_border=True)
-
-    # TODO Clean this up a bit.
-    margin = 10
-    mask = np.zeros_like(scidata, dtype='bool')
-    mask[:margin] = True
-    mask[-margin:] = True
-    mask[:, :margin] = True
-    mask[:, -margin:] = True
-
-    sources = daofind(scidata - median, mask=mask)
+    sources = find_sources(scidata, margin=margin)
 
     # Plot the masterimage.
     imstat = utils.imagestat(scidata, bpix)
@@ -872,7 +871,8 @@ def extract_photometry(workdir, outname, **kwargs):
     print('Extracting photometry.')
     xref = np.array(sources['xcentroid'][:])
     yref = np.array(sources['ycentroid'][:])
-    xall, yall, flux, eflux, skybkg, eskybkg, photflag = get_photometry(workdir, obs_table['FILENAME'], xref, yref, obs_table['offset'], obs_table['rot'])
+    xall, yall, flux, eflux, skybkg, eskybkg, photflag = get_photometry(workdir, obs_table['FILENAME'], xref, yref,
+                                                                        obs_table['offset'], obs_table['rot'])
 
     # Save the output.
     columns = (xall, yall, flux, eflux, skybkg, eskybkg, photflag)
