@@ -8,6 +8,7 @@ from skimage import transform
 
 from astropy.stats import sigma_clipped_stats
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
+import astroalign
 
 from . import utils
 from . import visualize
@@ -710,6 +711,24 @@ def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
     return offset, rot, success
 
 
+def align_images(image, target):
+    """Find the SimilaryTransform to align an input image with a target image."""
+
+    try:
+        tform, (_, _) = astroalign.find_transform(image, target)
+    except astroalign.MaxIterError:
+        offset = np.array([0, 0])
+        rot = np.array([[1, 0],
+                        [0, 1]])
+        success = False
+    else:
+        offset = tform.translation
+        rot = tform.params[:2, :2]
+        success = True
+
+    return offset, rot, success
+
+
 def flag_tracking(ra_vel, dec_vel, imgflag, nstd=3.0):
     """"""
 
@@ -769,45 +788,23 @@ def extract_photometry(workdir, outname, **kwargs):
     obs_table['imgflag'] = np.zeros(len(obs_table), dtype='uint8')
     obs_table['imgflag'] = flag_tracking(obs_table['RA_VEL'], obs_table['DEC_VEL'], obs_table['imgflag'])
 
-    # Extract photometry for image matching.
-    pbar = tqdm.tqdm(total=nobs)
-    results = []
-    with mp.Pool(nproc) as p:
-        for i in range(nobs):
-
-            date = obs_table['JD-OBS'][i]
-            filename = os.path.join(workdir, obs_table['FILENAME'][i])
-            scidata = utils.read_fitsdata(filename)
-
-            args = (scidata, date, photap, bpix)
-
-            results.append(p.apply_async(photprocess, args=args, callback=lambda x: pbar.update()))
-
-        p.close()
-        p.join()
-
-        photall = [result.get() for result in results]
-
-    pbar.close()
-
     # Perform image matching.
-    nmaster = int(nobs / 2)
-    xmaster = np.array(photall[nmaster][0]['xcenter'][:])
-    ymaster = np.array(photall[nmaster][0]['ycenter'][:])
-    phot_master = photall[nmaster][0]['aperture_sum'][:]
+    print('Aligning the observations.')
+    nmaster = int(nobs / 2)  # TODO more sophisticated selection of target image to deal with e.g. SAA passage.
+
+    filename = os.path.join(workdir, obs_table['FILENAME'][nmaster])
+    target = utils.read_fitsdata(filename)
 
     pbar = tqdm.tqdm(total=nobs)
     results = []
     with mp.Pool(nproc) as p:
 
         for i in range(nobs):
-            xframe = np.array(photall[i][0]['xcenter'][:])
-            yframe = np.array(photall[i][0]['ycenter'][:])
-            phot_frame = photall[i][0]['aperture_sum'][:]
+            filename = os.path.join(workdir, obs_table['FILENAME'][i])
+            image = utils.read_fitsdata(filename)
 
-            args = (xmaster, ymaster, phot_master, xframe, yframe, phot_frame)
-
-            results.append(p.apply_async(calctransprocess, args=args, callback=lambda x: pbar.update()))
+            args = (image, target)
+            results.append(p.apply_async(align_images, args=args, callback=lambda x: pbar.update()))
 
         p.close()
         p.join()
