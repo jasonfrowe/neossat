@@ -145,7 +145,7 @@ def extract_photometry(workdir, outname, **kwargs):
     nproc = kwargs.pop('nproc', 4)
     margin = kwargs.pop('margin', 10)
 
-    obs_table = utils.observation_table(workdir, header_keys=['RA_VEL', 'DEC_VEL', 'CCD-TEMP'])
+    obs_table = utils.observation_table([workdir], header_keys=['RA_VEL', 'DEC_VEL', 'CCD-TEMP'])
     nobs = len(obs_table)
 
     # Creat an image flag and flag bad tracking.
@@ -156,7 +156,7 @@ def extract_photometry(workdir, outname, **kwargs):
     print('Aligning the observations.')
     nmaster = int(nobs / 2)  # TODO more sophisticated selection of target image to deal with e.g. SAA passage.
 
-    filename = os.path.join(workdir, obs_table['FILENAME'][nmaster])
+    filename = obs_table['FILENAME'][nmaster]
     target = utils.read_fitsdata(filename)
 
     pbar = tqdm.tqdm(total=nobs)
@@ -164,7 +164,8 @@ def extract_photometry(workdir, outname, **kwargs):
     with mp.Pool(nproc) as p:
 
         for i in range(nobs):
-            filename = os.path.join(workdir, obs_table['FILENAME'][i])
+
+            filename = obs_table['FILENAME'][i]
             image = utils.read_fitsdata(filename)
 
             args = (image, target)
@@ -192,7 +193,8 @@ def extract_photometry(workdir, outname, **kwargs):
     for i in range(nobs):
 
         # Read the science image.
-        scidata = utils.read_fitsdata(os.path.join(workdir, obs_table['FILENAME'][i]))
+        filename = obs_table['FILENAME'][i]
+        scidata = utils.read_fitsdata(filename)
 
         # Prepare the transformation matrix.
         matrix = np.eye(3)
@@ -232,7 +234,7 @@ def extract_photometry(workdir, outname, **kwargs):
     print('Extracting photometry.')
     xref = np.array(sources['xcentroid'][:])
     yref = np.array(sources['ycentroid'][:])
-    xall, yall, flux, eflux, skybkg, eskybkg, photflag = get_photometry(workdir, obs_table['FILENAME'], xref, yref,
+    xall, yall, flux, eflux, skybkg, eskybkg, photflag = get_photometry('.', obs_table['FILENAME'], xref, yref,
                                                                         obs_table['offset'], obs_table['rot'])
 
     # Save the output.

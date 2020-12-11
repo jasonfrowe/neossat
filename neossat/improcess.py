@@ -703,7 +703,7 @@ def main(target, obspath, savedir, **kwargs):
             xsc, ysc = dark_table['xsc'][i], dark_table['ysc'][i]
             xov, yov = dark_table['xov'][i], dark_table['yov'][i]
 
-            args = (obspath, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
+            args = ('.', darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
 
             results.append(p.apply_async(darkprocess, args=args, callback=lambda x: pbar.update()))
 
@@ -740,7 +740,7 @@ def main(target, obspath, savedir, **kwargs):
 
         for i in range(nlight):
 
-            filename = os.path.join(obspath, light_table['FILENAME'][i])
+            filename = light_table['FILENAME'][i]
             xsc, ysc = light_table['xsc'][i], light_table['ysc'][i]
             xov, yov = light_table['xov'][i], light_table['yov'][i]
 

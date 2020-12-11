@@ -231,7 +231,7 @@ def read_file_list(filelist):
     return files
 
 
-def observation_table(obspath, header_keys=None):
+def observation_table(obsdirs, header_keys=None):
     """ Given a directory containing NEOSSat observations create a table of the observations. """
 
     # List of mandatory header keys.
@@ -243,7 +243,9 @@ def observation_table(obspath, header_keys=None):
         columns = list(set(columns))  # Removes potential duplicates.
 
     # Get a list of all fits files in the specified directory.
-    filelist = glob.glob(os.path.join(obspath, 'NEOS_*.fits'))
+    filelist = []
+    for obsdir in obsdirs:
+        filelist += glob.glob(os.path.join(obsdir, 'NEOS_*.fits'))
 
     # Read all the headers.
     headers = []
@@ -284,7 +286,7 @@ def observation_table(obspath, header_keys=None):
 
     # Create the table and add the filenames.
     obs_table = Table()
-    obs_table['FILENAME'] = [os.path.split(filename)[1] for filename in filelist]
+    obs_table['FILENAME'] = filelist
 
     # Add the mandatory and requested header keys. TODO check keys exist.
     for col in columns:
