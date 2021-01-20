@@ -469,16 +469,16 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
             imstat = utils.imagestat(ftoverscan_abs, bpix)
             visualize.plot_image(np.transpose(np.abs(ftoverscan_abs[:T*xn, :T*yn//2])), imstat, 0.0, 10.0)
 
-        mean_ftoverscan_abs = np.mean(ftoverscan_abs[T*1:T*xn, T*1:T*yn//2])
-        std_ftoverscan_abs = np.std(ftoverscan_abs[T*1:T*xn, T*1:T*yn//2])
+        mean_ftoverscan_abs = np.mean(ftoverscan_abs[T:T*(xn - 1), T:T*yn//2])
+        std_ftoverscan_abs = np.std(ftoverscan_abs[T:T*(xn - 1), T:T*yn//2])
         if info >= 1:
             print('mean, std:', mean_ftoverscan_abs, std_ftoverscan_abs)
 
         # Locate Frequency with largest amplitude.
-        max_array = ftoverscan_abs[T*1:T*xn, T*1:T*yn//2]
+        max_array = ftoverscan_abs[T:T*(xn - 1), T:T*yn//2]
         maxi, maxj = np.unravel_index(np.argmax(max_array), max_array.shape)
-        maxi += T*1
-        maxj += T*1
+        maxi += T
+        maxj += T
 
         snr = (ftoverscan_abs[maxi, maxj] - mean_ftoverscan_abs)/std_ftoverscan_abs
         if info >= 1:
