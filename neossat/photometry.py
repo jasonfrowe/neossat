@@ -8,8 +8,8 @@ Created on Fri Nov 18 12:02:13 2016
 import numpy as np
 
 import bottleneck as bt
- 
-import logging
+
+from astropy.modeling import models, fitting
 
 
 def simple_sky(sky):
@@ -152,7 +152,34 @@ class Photometry(object):
        
         rad = np.sqrt((self.xx - x0)**2 + (self.yy - y0)**2)
 
-        return rad - .5   
+        return rad - .5
+
+    def _get_fwhm(self, subim, x0, y0, radius):
+
+        # Compute distance relative to position.
+        rad = np.sqrt((self.xx - x0)**2 + (self.yy - y0)**2)
+
+        # Select pixels within a certain distance.
+        mask = rad <= radius
+        rpix = rad[mask]
+        pixvals = subim[mask]
+
+        # Estimate the amplitude.
+        w = np.exp(-0.5*(rpix/2.)**2)
+        amp = np.sum(w*pixvals)/np.sum(w**2)
+
+        # Initialize the model.
+        mod = models.Gaussian1D(amplitude=amp, mean=0., stddev=2.)
+        mod.mean.fixed = True
+
+        # Find the best-fit model.
+        fit = fitting.LevMarLSQFitter()
+        modfit = fit(mod, rpix, pixvals)
+
+        # Convert stddev to fwhm.
+        fwhm = 2.*np.sqrt(2.*np.log(2.))*modfit.stddev
+
+        return fwhm
     
     def __call__(self, image, x, y, moonpos=None, moonrad=30.):
         """
@@ -209,6 +236,7 @@ class Photometry(object):
         sky = np.zeros((nstars,))
         esky = np.zeros((nstars,))
         peak = np.zeros((nstars,))
+        fwhm = np.zeros((nstars,))
         flag = np.zeros((nstars,), dtype='int')
 
         # Flag stars close to the moon.
@@ -261,7 +289,10 @@ class Photometry(object):
             # Compute the peak value.
             mask = (rad < np.amax(self.aper))
             peak[i] = bt.nanmax(subim[mask])             
-             
+
+            # Compute the fwhm.
+            fwhm[i] = self._get_fwhm(subim, dx[i], dy[i], self.aper[-1])
+
             # Check for bad pixels in the apertures.
             if peak[i] > self.badpixval:
                 flag[i] += 8
@@ -302,4 +333,4 @@ class Photometry(object):
             if np.any(flux[i] < 0):
                 flag[i] += 16                
                 
-        return flux, eflux, sky, esky, peak, flag
+        return flux, eflux, sky, esky, peak, fwhm, flag

@@ -7,6 +7,7 @@ from scipy import spatial
 from skimage import transform
 
 from astropy.stats import sigma_clipped_stats
+from astropy.modeling import models, fitting
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 import astroalign
 
@@ -32,6 +33,42 @@ def find_sources(scidata, margin=10):
     return sources
 
 
+def psf_profile(image, x, y, radius):
+    """"""
+
+    nrows, ncols = image.shape
+
+    # Build coordinate grid.
+    xtmp = np.arange(ncols)
+    ytmp = np.arange(nrows)
+    xgrid, ygrid = np.meshgrid(xtmp, ytmp)
+
+    # Compute distance relative to position.
+    rad = np.sqrt((xgrid - x)**2 + (ygrid - y)**2)
+
+    # Select pixels within a certain distance.
+    mask = rad <= radius
+    rpix = rad[mask]
+    pixvals = image[mask]
+
+    # Estimate the amplitude.
+    w = np.exp(-0.5*(rpix/2.)**2)
+    amp = np.sum(w*pixvals)/np.sum(w**2)
+
+    # Initialize the model.
+    mod = models.Gaussian1D(amplitude=amp, mean=0., stddev=2.)
+    mod.mean.fixed = True
+
+    # Find the best-fit model.
+    fit = fitting.LevMarLSQFitter()
+    modfit = fit(mod, rpix, pixvals)
+
+    # Convert stddev to fwhm.
+    fwhm = 2.*np.sqrt(2.*np.log(2.))*modfit.stddev
+
+    return rpix, pixvals, fwhm, modfit
+
+
 def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=None):
     """"""
 
@@ -53,6 +90,7 @@ def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=N
     eflux = np.zeros((nimages, nstars, naper))
     skybkg = np.zeros((nimages, nstars))
     eskybkg = np.zeros((nimages, nstars))
+    fwhm = np.zeros((nimages, nstars))
     photflag = np.zeros((nimages, nstars), dtype='uint8')
 
     # Initialize photometric extraction.
@@ -71,9 +109,9 @@ def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=N
         yall[i] = -offset[i, 1] + invmat[1, 0] * xref + invmat[1, 1] * yref
 
         # Extract the aperture photometry.
-        flux[i], eflux[i], skybkg[i], eskybkg[i], _, photflag[i] = extract(scidata, xall[i], yall[i])
+        flux[i], eflux[i], skybkg[i], eskybkg[i], _, fwhm[i], photflag[i] = extract(scidata, xall[i], yall[i])
 
-    return xall, yall, flux, eflux, skybkg, eskybkg, photflag
+    return xall, yall, flux, eflux, skybkg, eskybkg, fwhm, photflag
 
 
 def align_images(image, target):
@@ -234,12 +272,12 @@ def extract_photometry(workdir, outname, **kwargs):
     print('Extracting photometry.')
     xref = np.array(sources['xcentroid'][:])
     yref = np.array(sources['ycentroid'][:])
-    xall, yall, flux, eflux, skybkg, eskybkg, photflag = get_photometry('.', obs_table['FILENAME'], xref, yref,
-                                                                        obs_table['offset'], obs_table['rot'])
+    xall, yall, flux, eflux, skybkg, eskybkg, fwhm, photflag = get_photometry('.', obs_table['FILENAME'], xref, yref,
+                                                                              obs_table['offset'], obs_table['rot'])
 
     # Save the output.
-    columns = (xall, yall, flux, eflux, skybkg, eskybkg, photflag)
-    colnames = ('x', 'y', 'flux', 'eflux', 'skybkg', 'eskybkg', 'photflag')
+    columns = (xall, yall, flux, eflux, skybkg, eskybkg, fwhm, photflag)
+    colnames = ('x', 'y', 'flux', 'eflux', 'skybkg', 'eskybkg', 'fwhm', 'photflag')
     obs_table.add_columns(columns, names=colnames)
     tablename = os.path.join(workdir, outname + '_photometry.fits')
     obs_table.write(tablename, overwrite=True)
