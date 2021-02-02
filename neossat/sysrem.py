@@ -14,18 +14,19 @@ def whiten_photometry(photometry):
 
     npoints, nstars = photometry.shape
 
+    phot_out = np.copy(photometry)
     icut = np.zeros_like(photometry, dtype='int')
     for istar in range(nstars):
 
-        col = photometry[:, istar]
+        col = np.copy(photometry[:, istar])
 
         icut1 = utils.cutoutliers(col)
-        icut2 = utils.sigclip(col, icut1)
-        icut[:, istar] = icut1 + icut2
+        # icut2 = utils.sigclip(col, icut1)
+        icut[:, istar] = icut1  # + icut2
 
-        photometry[:, istar] = utils.replaceoutlier(col, icut[:, istar])
+        phot_out[:, istar] = utils.replaceoutlier(col, icut[:, istar])
 
-    return photometry.squeeze(), icut.squeeze()
+    return phot_out.squeeze(), icut.squeeze()
 
 
 def normalize_photometry(photometry):
@@ -120,7 +121,7 @@ def get_pcavec(data, nvec=None, scale_data=False):
     return vectors
 
 
-def pca_photcor(flux, pcavec, npca, mean_model=None, mask=None):
+def pca_photcor(flux, eflux, pcavec, npca, mean_model=None, mask=None):
     """Use a set of PCA basis vectors to model the flux."""
 
     if mean_model is None:
@@ -136,6 +137,47 @@ def pca_photcor(flux, pcavec, npca, mean_model=None, mask=None):
     # Evaluate the PCA model and get the corrected flux.
     totmodel = np.sum(pars*mat, axis=1)
     pcamodel = np.sum(pars[1:]*mat[:, 1:], axis=1)
-    corflux = (flux - pcamodel)/pars[0]
+    calflux = (flux - pcamodel)/pars[0]
+    ecalflux = eflux/pars[0]
 
-    return corflux, totmodel, pcamodel
+    calflux = flux/totmodel
+    ecalflux = eflux/totmodel
+
+    return calflux, ecalflux, totmodel, pcamodel
+
+
+def transit_chisq(free_params, time, flux, eflux, pcavec, fixed_params):
+
+    import batman
+
+    t0, = free_params
+    per, rp, a, inc = fixed_params
+    params = batman.TransitParams()
+    params.t0 = 0
+    params.per = per
+    params.rp = rp
+    params.a = a
+    params.inc = inc
+    params.ecc = 0
+    params.w = 90
+    params.limb_dark = "linear"
+    params.u = [0.6]
+
+    m = batman.TransitModel(params, time - t0)
+    mean_model = m.light_curve(params)
+
+    corflux, totmodel, pcamodel = pca_photcor(flux, pcavec, 2, mean_model=mean_model)
+    chisq = (flux - totmodel)**2  #/eflux**2
+    chisq = np.sum(chisq)
+
+    return chisq
+
+
+def transit_model(free_params, time, flux, eflux, pcavec, fixed_params):
+
+    from scipy import optimize
+
+    args = (time, flux, eflux, pcavec, fixed_params)
+    result = optimize.minimize(transit_chisq, free_params, args=args, method='Nelder-Mead')
+
+    return result

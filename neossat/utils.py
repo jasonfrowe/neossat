@@ -267,7 +267,7 @@ def observation_table(obsdirs, header_keys=None):
             badidx.append(i)
             continue
 
-        if header['IMGSTATE'] == 'INCOMPLETE':
+        if header['IMGSTATE'] != 'COMPLETE':
             print('File {} appears to be corrupt, skipping'.format(filename))
             badidx.append(i)
             continue
