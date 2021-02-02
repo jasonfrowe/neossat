@@ -83,6 +83,7 @@ def plot_image(scidata, imstat, sigscalel, sigscaleh, figname=None, display=True
     plt.figure(figsize=(20, 20))  # Adjust size of figure.
 
     imgplot = plt.imshow(scidata - imstat[0], norm=LogNorm(), vmin=vmin, vmax=vmax)
+    plt.axis((-0.5, scidata.shape[1]-0.5, -0.5, scidata.shape[0]-0.5))
     plt.xlabel("Column (Pixels)")
     plt.ylabel("Row (Pixels)")
 
