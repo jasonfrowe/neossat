@@ -736,9 +736,10 @@ def main(target, obspath, savedir, **kwargs):
     # Combine the processed darks to obtain a master dark.
     masterdark = combinedarks(alldarkdata)
 
-    # Display the master dark.
-#    imstat = utils.imagestat(masterdark, bpix)
-#    visualize.plot_image(masterdark, imstat, 0.3, 10.0)
+    # Plot the master dark.
+    imstat = utils.imagestat(masterdark, bpix)
+    figname = os.path.join(savedir, target + '_masterdark.png')
+    visualize.plot_image(masterdark, imstat, 1.0, 50.0, figname=figname, display=False)
 
     # Save the masterdark.
     head, tail = os.path.split(obspath)
