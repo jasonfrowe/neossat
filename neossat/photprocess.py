@@ -244,6 +244,11 @@ def extract_photometry(workdir, outname, **kwargs):
     filename = obs_table['FILENAME'][nmaster]
     target = utils.read_fitsdata(filename)
 
+    # Plot the target image.
+    imstat = utils.imagestat(target, bpix)
+    figname = os.path.join(workdir, outname + '_targetimage.png')
+    visualize.plot_image(target, imstat, 1.0, 50.0, figname=figname, display=False)
+
     pbar = tqdm.tqdm(total=nobs)
     results = []
     with mp.Pool(nproc) as p:
