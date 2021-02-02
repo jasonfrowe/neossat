@@ -99,7 +99,8 @@ def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=N
     for i in range(nimages):
 
         # Read the image.
-        scidata = utils.read_fitsdata(os.path.join(workdir, lightlist[i]))
+        filename = os.path.join(workdir, lightlist[i])
+        scidata = utils.read_fitsdata(filename)
 
         # Compute star coordinates.
         mat = rot[i]
