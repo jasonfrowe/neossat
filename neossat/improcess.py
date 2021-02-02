@@ -742,8 +742,7 @@ def main(target, obspath, savedir, **kwargs):
     visualize.plot_image(masterdark, imstat, 1.0, 50.0, figname=figname, display=False)
 
     # Save the masterdark.
-    head, tail = os.path.split(obspath)
-    darkname = 'masterdark_{}_{}.fits'.format(tail, target)
+    darkname = '{}_masterdark.fits'.format(target)
     darkname = os.path.join(savedir, darkname)
     hdu = fits.PrimaryHDU(masterdark)
     hdu.writeto(darkname, overwrite=True)
