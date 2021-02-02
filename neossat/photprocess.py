@@ -132,6 +132,52 @@ def align_images(image, target):
     return offset, rot, success
 
 
+def image_stack(workdir, lightlist, offset, rot, nstack=100):
+
+    # Check that we can reach the requested stack depth.
+    nobs = len(lightlist)
+    nimg = np.minimum(nobs, nstack)
+
+    # Obtain the shape of the images.
+    filename = os.path.join(workdir, lightlist[0])
+    scidata = utils.read_fitsdata(filename)
+    nrows, ncols = scidata.shape
+
+    # Pre-allocate the array.
+    stack = np.zeros((nimg, nrows, ncols))
+
+    # Select images for use in the stack. TODO could be more sophisticated.
+    step = int(np.floor(nobs/nstack))
+    step = np.maximum(step, 1)
+    gidx = np.arange(nobs)[::step][:nimg]
+
+    for i, idx in enumerate(gidx):
+
+        # Read the science image.
+        filename = os.path.join(workdir, lightlist[idx])
+        scidata = utils.read_fitsdata(filename)
+
+        # Prepare the transformation matrix.
+        matrix = np.eye(3)
+        matrix[0][0] = rot[idx, 0, 0]
+        matrix[0][1] = rot[idx, 0, 1]
+        matrix[0][2] = offset[idx, 0]
+
+        matrix[1][0] = rot[idx, 1, 0]
+        matrix[1][1] = rot[idx, 1, 1]
+        matrix[1][2] = offset[idx, 1]
+
+        # Transform the image and add it to the stack.
+        tform = transform.AffineTransform(matrix)
+        stack[i] = transform.warp(scidata, tform.inverse, cval=np.nan)
+
+    # Get the master image.
+    stack = stack - np.nanmedian(stack, axis=(1, 2), keepdims=True)
+    stack_med = np.nanmedian(stack, axis=0)
+
+    return stack_med
+
+
 def flag_tracking(ra_vel, dec_vel, imgflag, nstd=3.0):
     """"""
 
@@ -227,46 +273,17 @@ def extract_photometry(workdir, outname, **kwargs):
 
     # Create a masterimage.
     print('Creating the masterimage.')
-    image_stack = np.zeros((nobs, obs_table['xsc'][0], obs_table['ysc'][0]))
-    for i in range(nobs):
-
-        # Read the science image.
-        filename = obs_table['FILENAME'][i]
-        scidata = utils.read_fitsdata(filename)
-
-        # Prepare the transformation matrix.
-        matrix = np.eye(3)
-        matrix[0][0] = obs_table['rot'][i, 0, 0]
-        matrix[0][1] = obs_table['rot'][i, 0, 1]
-        matrix[0][2] = obs_table['offset'][i, 0]
-
-        matrix[1][0] = obs_table['rot'][i, 1, 0]
-        matrix[1][1] = obs_table['rot'][i, 1, 1]
-        matrix[1][2] = obs_table['offset'][i, 1]
-
-        # Transform the image and add it to the stack.
-        tform = transform.AffineTransform(matrix)
-        image_stack[i] = transform.warp(scidata, tform.inverse)
-
-    # Remove flagged images.
-    image_stack = image_stack[obs_table['imgflag'] < 1]
-
-    # Get the master image.
-    image_stack = image_stack - np.median(image_stack, axis=(1, 2), keepdims=True)
-    image_med = np.median(image_stack, axis=0)
-
-    # Clear memory.
-    del image_stack
+    mask = obs_table['imgflag'] == 0
+    master_image = image_stack('.', obs_table['FILENAME'][mask], obs_table['offset'][mask], obs_table['rot'][mask])
 
     # Create master photometry list.
     print('Creating master photometry list.')
-    scidata = np.copy(image_med)
-    sources = find_sources(scidata, margin=margin)
+    sources = find_sources(master_image, margin=margin)
 
     # Plot the masterimage.
-    imstat = utils.imagestat(scidata, bpix)
+    imstat = utils.imagestat(master_image, bpix)
     figname = os.path.join(workdir, outname + '_masterimage.png')
-    visualize.plot_image_wsource(scidata, imstat, 1.0, 50.0, sources, figname=figname, display=False)
+    visualize.plot_image_wsource(master_image, imstat, 1.0, 50.0, sources, figname=figname, display=False)
 
     # Extract photometry.
     print('Extracting photometry.')
