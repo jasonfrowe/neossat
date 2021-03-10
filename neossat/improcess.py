@@ -696,7 +696,7 @@ def lightprocess_save(filename, savedir, darkavg, xsc, ysc, xov, yov, snrcut, fm
     return info
 
 
-def main(target, obspath, savedir, **kwargs):
+def calibrate_observations(target, obspath, savedir, **kwargs):
     """Process all observations of a specific target in a specific directory."""
 
     # Make sure output directory exists.
@@ -806,6 +806,11 @@ def main(target, obspath, savedir, **kwargs):
             p.join()
 
         pbar.close()
+
+    return
+
+
+def main():
 
     return
 
