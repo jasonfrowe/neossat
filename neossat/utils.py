@@ -18,36 +18,43 @@ def ensure_dir(path):
     return
 
 
-def bindata(time, data, tbin):  # TODO it might be possible to clean this one up a bit.
+def bindata(time, data, binsize):
     """"""
 
-    bin_time = []
-    bin_flux = []
-    bin_ferr = []
-    npt = len(time)
+    # Create bins and sort the data into the bins.
     tmin = np.min(time)
-    tmax = np.max(time)
-    bins = np.array([int((t-tmin)/tbin) for t in time])
+    nbins = np.ceil(np.ptp(time)/binsize).astype('int')
+    binedges = tmin + binsize*np.arange(nbins + 1)
+    binidx = np.searchsorted(binedges, time)
 
-    for b in range(np.max(bins)+1):
+    # Create arrays.
+    bin_npt = np.zeros(nbins + 2)
+    bin_time = np.zeros(nbins + 2)
+    bin_flux = np.zeros(nbins + 2)
+    bin_eflux = np.zeros(nbins + 2)
 
-        npt = len(bins[bins == b])
+    # Loop over all bins.
+    for idx in np.unique(binidx):
 
+        # Select point in this bin.
+        mask = binidx == idx
+
+        # Only consider bins with more than 3 points.
+        npt = np.sum(mask)
         if npt > 3:
 
-            bint1 = np.median(time[bins == b])
-            binf1 = np.median(data[bins == b])
-            binfe = np.std(data[bins == b])/np.sqrt(npt)
+            bin_npt[idx] = npt
+            bin_time[idx] = np.median(time[mask])
+            bin_flux[idx] = np.median(data[mask])
+            bin_eflux[idx] = np.std(data[mask])/np.sqrt(npt)
 
-            bin_time.append(bint1)
-            bin_flux.append(binf1)
-            bin_ferr.append(binfe)
+    # Remove empty bins.
+    mask = bin_npt > 0
+    bin_time = bin_time[mask]
+    bin_flux = bin_flux[mask]
+    bin_eflux = bin_eflux[mask]
 
-    bin_time = np.array(bin_time)
-    bin_flux = np.array(bin_flux)
-    bin_ferr = np.array(bin_ferr)
-
-    return bin_time, bin_flux, bin_ferr
+    return bin_time, bin_flux, bin_eflux
 
 
 def meddiff(x):
