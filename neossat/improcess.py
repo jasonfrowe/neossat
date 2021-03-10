@@ -155,7 +155,7 @@ def fouriercor(scidata_in, a):
     return scidata_cor
 
 
-def overscan_cor(scidata_c, overscan, a, bpix):
+def overscan_cor(scidata_c, overscan, a, bpix):  # TODO unused parameter?
     """"""
 
     scidata_co = fouriercor(scidata_c, a)
@@ -214,7 +214,7 @@ def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=
 
     mask = (data > mind) & (data < maxd) & (ref_data > mind) & (ref_data < maxd)
 
-    if np.sum(mask) > 10:
+    if np.sum(mask) > 5000:
         data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], 50)
 
         x0 = [b1, m1, m2, tp]
@@ -222,6 +222,10 @@ def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=
 
         scaled_data = seg_func(ans.x, data)
         scaled_image = scaled_data.reshape(image.shape)
+
+    else:
+        msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
+        raise ValueError(msg)
 
     return scaled_image
 
@@ -251,10 +255,14 @@ def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000):
         scaled_data = seg_func(ans.x, data)
         scaled_image = scaled_data.reshape(image.shape)
 
+    else:
+        msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
+        raise ValueError(msg)
+
     return scaled_image
 
 
-def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):
+def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):  # TODO unused parameters.
     """
     mind,maxd : range of data to consider when matching frames.  Keeping maxd relatively low avoids stars
     [b1,m1,m2,tp] - initial guess for solution.
@@ -291,7 +299,9 @@ def find_line_model(points):
     #           here we just add some noise to avoid division by zero
 
     # find a line model for these points
-    m = (points[1, 1] - points[0, 1])/(points[1, 0] - points[0, 0] + sys.float_info.epsilon)  # Slope (gradient) of the line.
+    num = (points[1, 1] - points[0, 1])
+    denom = (points[1, 0] - points[0, 0] + sys.float_info.epsilon)
+    m = num/denom  # Slope (gradient) of the line.
     c = points[1, 1] - m*points[1, 0]  # y-intercept of the line.
 
     return m, c
@@ -377,9 +387,6 @@ def darkcorrect(scidata, masterdark, bpix):
                 y_list.append(y0)
                 num += 1
 
-        x_inliers = np.array(x_list)
-        y_inliers = np.array(y_list)
-
         # In case a new model is better - cache it.
         if num/float(n_samples) > ratio:
             ratio = num/float(n_samples)
@@ -389,9 +396,6 @@ def darkcorrect(scidata, masterdark, bpix):
         # print ('  inlier ratio = ', num/float(n_samples))
         # print ('  model_m = ', model_m)
         # print ('  model_c = ', model_c)
-
-        # Plot the current step.
-        # ransac_plot(it, x_noise,y_noise, m, c, False, x_inliers, y_inliers, maybe_points)
 
         # We are done in case we have enough inliers.
         if num > n_samples*ransac_ratio:
@@ -441,7 +445,6 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
 
     # Calculate Median of overscan region.
     med_overscan = np.median(overscan)
-    std_overscan = np.std(overscan - med_overscan)
 
     # Size of Overscan.
     xn = overscan.shape[0]
