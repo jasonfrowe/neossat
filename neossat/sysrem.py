@@ -44,11 +44,17 @@ def _sysrem_1comp(data, error, maxiter=20):
     nrows, ncols = data.shape
     weights = 1/error**2
 
+    component = np.ones(nrows)
     amplitude = np.ones(ncols)
     for niter in range(maxiter):
 
-        component = np.sum(weights*amplitude*data, axis=1)/np.sum(weights*(amplitude**2), axis=1)
-        amplitude = np.sum(weights*component[:, np.newaxis]*data, axis=0)/np.sum(weights*(component**2)[:, np.newaxis], axis=0)
+        num = np.sum(weights*amplitude*data, axis=1)
+        denom = np.sum(weights*(amplitude**2), axis=1)
+        component = num/denom
+
+        num = np.sum(weights*component[:, np.newaxis]*data, axis=0)
+        denom = np.sum(weights*(component**2)[:, np.newaxis], axis=0)
+        amplitude = num/denom
 
     norm = np.amax(amplitude)
     component = component*norm
@@ -165,8 +171,8 @@ def transit_chisq(free_params, time, flux, eflux, pcavec, fixed_params):
     m = batman.TransitModel(params, time - t0)
     mean_model = m.light_curve(params)
 
-    corflux, totmodel, pcamodel = pca_photcor(flux, pcavec, 2, mean_model=mean_model)
-    chisq = (flux - totmodel)**2  #/eflux**2
+    calflux, ecalflux, totmodel, pcamodel = pca_photcor(flux, eflux, pcavec, 2, mean_model=mean_model)
+    chisq = (flux - totmodel)**2  # /eflux**2
     chisq = np.sum(chisq)
 
     return chisq
