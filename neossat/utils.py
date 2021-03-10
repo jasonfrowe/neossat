@@ -145,28 +145,25 @@ def sigclip(flux, icut=None, nstd=3.0, maxiter=3):
     return icut2
 
 
-def cutoutliers(flux):
+def cutoutliers(flux, halfwidth=25, nstd=5.):
     """"""
 
     npt = len(flux)
     icut = np.zeros(npt, dtype='int')
-
-    nsampmax = 25  # Number of nearby samples for stats.
-    sigma = 3.0  # Threshold for removing outliers.
 
     mask = np.isnan(flux)
     icut[mask] = 1
 
     for i in range(1, npt-1):
 
-        i1 = np.max([0, i-nsampmax])
-        i2 = np.min([npt-1, i+nsampmax])
+        i1 = np.maximum(0, i - halfwidth)
+        i2 = np.minimum(npt-1, i + halfwidth)  # TODO not npt-1 but npt?
         samps = flux[i1:i2]
         dd_median = meddiff(samps[icut[i1:i2] == 0])
-        threshold = dd_median*sigma
+        threshold = nstd*dd_median
 
-        vp = flux[i] - flux[i+1]
-        vm = flux[i] - flux[i-1]
+        vp = flux[i] - flux[i + 1]
+        vm = flux[i] - flux[i - 1]
 
         if (np.abs(vp) > threshold) and (np.abs(vm) > threshold) and (vp/vm > 0):
             icut[i] = 1  # Cut data point.
