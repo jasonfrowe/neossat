@@ -134,14 +134,13 @@ def pca_photcor(flux, eflux, pcavec, npca, mean_model=None, mask=None):
     mat = np.column_stack([mean_model, pcavec[:, :npca]])
     pars = np.linalg.lstsq(mat[mask], flux[mask], rcond=None)[0]
 
-    # Evaluate the PCA model and get the corrected flux.
+    # Evaluate the total model and PCA only component.
     totmodel = np.sum(pars*mat, axis=1)
     pcamodel = np.sum(pars[1:]*mat[:, 1:], axis=1)
+
+    # Compute the corrected flux.
     calflux = (flux - pcamodel)/pars[0]
     ecalflux = eflux/pars[0]
-
-    calflux = flux/totmodel
-    ecalflux = eflux/totmodel
 
     return calflux, ecalflux, totmodel, pcamodel
 
