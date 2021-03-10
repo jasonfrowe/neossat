@@ -237,8 +237,13 @@ def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000):
 
     mask = (data > min1) & (data < max1) & (ref_data > min2) & (ref_data < max2)
 
-    if np.sum(mask) > 10:
-        data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], 50)
+    if np.sum(mask) > 5000:
+
+        binsize = 50
+        if np.ptp(data[mask])/binsize < 10:
+            binsize = np.ceil(np.ptp(data[mask])/10)
+
+        data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], binsize)
 
         x0 = [b1, m1, m2, tp]
         ans = optimize.least_squares(ls_seg_func, x0, args=[data_bin, ref_data_bin, err_bin])
