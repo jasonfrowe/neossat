@@ -3,13 +3,12 @@ import multiprocessing as mp
 
 import tqdm
 import numpy as np
-from scipy import spatial
 from skimage import transform
 
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.modeling import models, fitting
-from photutils import DAOStarFinder, CircularAperture, aperture_photometry
+from photutils import DAOStarFinder
 import astroalign
 
 from . import utils
