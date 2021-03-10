@@ -319,5 +319,10 @@ def extract_photometry(workdir, outname, **kwargs):
     return
 
 
+def main():
+
+    return
+
+
 if __name__ == '__main__':
-    extract_photometry()
+    main()
