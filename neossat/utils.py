@@ -319,9 +319,12 @@ def parse_observation_table(obs_table, target, ela_tol=15., sun_tol=20.):
     light_table = obs_table[mask]
 
     # Find good darks matching the observations of the target.
+    exptime = light_table['EXPOSURE'][0]
     xsc, ysc = light_table[0]['xsc'], light_table[0]['ysc']
+
     mask = (obs_table['OBJECT'] == 'DARK') & (obs_table['shutter'] == 1) & \
-           (obs_table['xsc'] == xsc) & (obs_table['ysc'] == ysc)
+           (obs_table['xsc'] == xsc) & (obs_table['ysc'] == ysc) & \
+           (obs_table['EXPOSURE'] <= 2*exptime) & (obs_table['EXPOSURE'] >= 0.5*exptime)
 
     if not np.any(mask):
         raise ValueError('No valid darks found for observations of ' + target)
