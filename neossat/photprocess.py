@@ -6,6 +6,7 @@ import numpy as np
 from scipy import spatial
 from skimage import transform
 
+from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.modeling import models, fitting
 from photutils import DAOStarFinder, CircularAperture, aperture_photometry
@@ -286,6 +287,11 @@ def extract_photometry(workdir, outname, **kwargs):
     print('Creating the masterimage.')
     mask = obs_table['imgflag'] == 0
     master_image = image_stack('.', obs_table['FILENAME'][mask], obs_table['offset'][mask], obs_table['rot'][mask])
+
+    # Save the masterimage.
+    mastername = os.path.join(workdir, outname + '_masterimage.fits')
+    hdu = fits.PrimaryHDU(master_image)
+    hdu.writeto(mastername, overwrite=True)
 
     # Create master photometry list.
     print('Creating master photometry list.')
