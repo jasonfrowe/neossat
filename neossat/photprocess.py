@@ -239,9 +239,14 @@ def extract_photometry(workdir, outname, **kwargs):
 
     # Perform image matching.
     print('Aligning the observations.')
-    nmaster = int(nobs / 2)  # TODO more sophisticated selection of target image to deal with e.g. SAA passage.
 
-    filename = obs_table['FILENAME'][nmaster]
+    # Select the middle unflagged image as the reference for aligning the images.
+    mask = obs_table['imgflag'] == 0
+    goodfiles = obs_table['FILENAME'][mask]
+
+    nmaster = len(goodfiles)//2
+    filename = goodfiles[nmaster]
+
     target = utils.read_fitsdata(filename)
 
     # Plot the target image.
