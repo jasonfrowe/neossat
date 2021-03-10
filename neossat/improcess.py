@@ -667,7 +667,11 @@ def lightprocess_save(filename, savedir, darkavg, xsc, ysc, xov, yov, snrcut, fm
     # Set up new file name for cleaned image.
     base = os.path.basename(filename)
     x = os.path.splitext(base)
-    newfile = os.path.join(savedir, x[0] + "_cord.fits")
+
+    if len(darkavg) != 0:
+        newfile = os.path.join(savedir, x[0] + "_cord.fits")
+    else:
+        newfile = os.path.join(savedir, x[0] + "_cor.fits")
 
     # Write the file.
     # header = fits.getheader(filename)
@@ -701,6 +705,7 @@ def main(target, obspath, savedir, **kwargs):
     xoff = kwargs.pop('xoff', 0)
     yoff = kwargs.pop('yoff', 0)
     nproc = kwargs.pop('nproc', 4)
+    save_cor_files = kwargs.pop('save_cor_files', False)
 
     print('Processing observations in directory {}'.format(obspath))
 
@@ -774,6 +779,28 @@ def main(target, obspath, savedir, **kwargs):
         p.join()
 
     pbar.close()
+
+    if save_cor_files:
+
+        print('Processing {} light images without dark correction.'.format(nlight))
+
+        # Use multiproessing to process all light images.
+        pbar = tqdm.tqdm(total=nlight)
+        with mp.Pool(nproc) as p:
+
+            for i in range(nlight):
+                filename = light_table['FILENAME'][i]
+                xsc, ysc = light_table['xsc'][i], light_table['ysc'][i]
+                xov, yov = light_table['xov'][i], light_table['yov'][i]
+
+                args = (filename, savedir, [], xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
+
+                p.apply_async(lightprocess_save, args=args, callback=lambda x: pbar.update())
+
+            p.close()
+            p.join()
+
+        pbar.close()
 
     return
 
