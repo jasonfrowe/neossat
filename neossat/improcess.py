@@ -105,7 +105,7 @@ def func(a, xn, yn, xoff, yoff, overscan):  # TODO more descriptive function nam
     return diffflat
 
 
-def funcphase(aoff, a, xn, yn, scidata_in, stdcut=None):
+def funcphase(aoff, a, xn, yn, scidata_in, mask=None):
     """Determine phase offset for science image."""
 
     xoff = aoff[0]
@@ -118,10 +118,9 @@ def funcphase(aoff, a, xn, yn, scidata_in, stdcut=None):
     else:
         diff = (scidata_in - model)
 
-    if stdcut is not None:
+    if mask is not None:
 
-        diffflat = diff.flatten()
-        diffflat[np.abs(diffflat) > stdcut] = 0.0
+        diffflat = diff[mask].flatten()
 
         return diffflat
 
@@ -132,17 +131,21 @@ def fouriercor(scidata_in, a):
     """Apply Fourier correction from overscan."""
 
     xn, yn = scidata_in.shape
-    scidata_z = scidata_in - np.median(scidata_in)
+
+    # Compute statistics and median subtract the data.
+    mean, median, stddev = sigma_clipped_stats(scidata_in)
+    scidata_z = scidata_in - median
 
     # Perform an initial fit.
     aoff = np.array([0.5, 0.5])
-    stdcut = 1.0e30
-    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
+    mask = np.abs(scidata_z) < 3*stddev
+    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, mask), factor=1)
 
     # Apply a sigma cut, to reduce the effect of stars in the image.
     diff = funcphase(aoff, a, xn, yn, scidata_z)
-    stdcut = 3.0*np.std(diff)
-    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
+    mean, median, stddev = sigma_clipped_stats(diff)
+    mask = np.abs(diff) < 3.0*stddev
+    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, mask), factor=1)
 
     # Remove the final model from the data.
     xoff, yoff = aoff
