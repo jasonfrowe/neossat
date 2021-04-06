@@ -145,7 +145,12 @@ class Photometry(object):
         
         tmp = np.arange(nbox) - nhalf
         self.xx, self.yy = np.meshgrid(tmp, tmp)                
-        
+
+        self.mod = models.Gaussian1D(amplitude=1., mean=0., stddev=2.)
+        self.mod.mean.fixed = True
+
+        self.fit = fitting.LevMarLSQFitter()
+
         return
     
     def _aper_mask(self, x0, y0):
@@ -169,12 +174,11 @@ class Photometry(object):
         amp = np.sum(w*pixvals)/np.sum(w**2)
 
         # Initialize the model.
-        mod = models.Gaussian1D(amplitude=amp, mean=0., stddev=2.)
-        mod.mean.fixed = True
+        mod = self.mod
+        mod.amplitude = amp
 
         # Find the best-fit model.
-        fit = fitting.LevMarLSQFitter()
-        modfit = fit(mod, rpix, pixvals)
+        modfit = self.fit(mod, rpix, pixvals)
 
         # Convert stddev to fwhm.
         fwhm = 2.*np.sqrt(2.*np.log(2.))*modfit.stddev
