@@ -16,19 +16,31 @@ from . import visualize
 from .photometry import Photometry
 
 
-def find_sources(scidata, margin=10):
+def find_sources(scidata, margin=10, nmax=None):
     """Detect stars in the science image."""
 
+    # Initialize the DAOStarFinder.
     mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
     daofind = DAOStarFinder(fwhm=2.0, threshold=5.*stddev, exclude_border=True)
 
+    # Mask a border around the edge of the image.
     mask = np.zeros_like(scidata, dtype='bool')
     mask[:margin] = True
     mask[-margin:] = True
     mask[:, :margin] = True
     mask[:, -margin:] = True
 
+    # Find sources in the image.
     sources = daofind(scidata - median, mask=mask)
+
+    # Sort the sources from brightest to faintest.
+    invsort = np.argsort(sources['flux'])[::-1]
+    sources = sources[invsort]
+
+    # If nmax is given pick only the nmax brightest sources.
+    if nmax is not None:
+        nmax = np.minimum(len(sources), nmax)
+        sources = sources[:nmax]
 
     return sources
 
@@ -229,6 +241,7 @@ def extract_photometry(workdir, outname, **kwargs):
     bpix = kwargs.pop('bpix', -1.0e10)
     nproc = kwargs.pop('nproc', 4)
     margin = kwargs.pop('margin', 10)
+    nmax = kwargs.pop('nmax', 100)  # TODO should probably be None.
 
     obs_table = utils.observation_table([workdir], header_keys=['RA_VEL', 'DEC_VEL', 'CCD-TEMP'])
     nobs = len(obs_table)
@@ -294,7 +307,7 @@ def extract_photometry(workdir, outname, **kwargs):
 
     # Create master photometry list.
     print('Creating master photometry list.')
-    sources = find_sources(master_image, margin=margin)
+    sources = find_sources(master_image, margin=margin, nmax=nmax)
 
     # Plot the masterimage.
     imstat = utils.imagestat(master_image, bpix)
