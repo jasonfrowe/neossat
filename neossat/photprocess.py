@@ -96,7 +96,7 @@ def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=N
     # Initialize photometric extraction.
     extract = Photometry(aper, sky)
 
-    for i in range(nimages):
+    for i in tqdm.tqdm(range(nimages)):
 
         # Read the image.
         filename = os.path.join(workdir, lightlist[i])
