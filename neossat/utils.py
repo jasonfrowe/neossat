@@ -18,13 +18,17 @@ def ensure_dir(path):
     return
 
 
-def bindata(time, data, binsize):
+def bindata(time, data, binsize, binedges=None):
     """"""
 
     # Create bins and sort the data into the bins.
-    tmin = np.min(time)
-    nbins = np.ceil(np.ptp(time)/binsize).astype('int')
-    binedges = tmin + binsize*np.arange(nbins + 1)
+    if binedges is None:
+        tmin = np.min(time)
+        nbins = np.ceil(np.ptp(time)/binsize).astype('int')
+        binedges = tmin + binsize*np.arange(nbins + 1)
+    else:
+        nbins = len(binedges) - 1
+
     binidx = np.searchsorted(binedges, time)
 
     # Create arrays.

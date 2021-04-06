@@ -15,6 +15,8 @@ from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 from . import utils
 from . import visualize
 
+import matplotlib.pyplot as plt
+
 
 def columncor(scidata, bpix):
     """"""
@@ -206,7 +208,7 @@ def darkprocess(workdir, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff,
     return scidata_cor
 
 
-def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):
+def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000, debug=False):
     """"""
 
     data = image.flatten()
@@ -223,6 +225,31 @@ def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=
         scaled_data = seg_func(ans.x, data)
         scaled_image = scaled_data.reshape(image.shape)
 
+        if debug:
+            xfit = np.logspace(-3, np.log10(maxd), 200)
+            yfit = seg_func(ans.x, xfit)
+
+            plt.subplot(211)
+            plt.loglog(data[mask], ref_data[mask], 'g.', label='Used pixels.')
+            plt.loglog(data[~mask], ref_data[~mask], 'r.', alpha=0.5, label='Masked pixels.')
+            plt.plot(data_bin, ref_data_bin, 'o', zorder=10, label='Median-binned values.')
+            plt.plot(xfit, yfit, 'k', label='Scaling-fit')
+            plt.axvline(ans.x[3])
+
+            plt.legend()
+            plt.ylabel('Image Values')
+
+            plt.subplot(212)
+            plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], 'g.', label='Used Pixels')
+            plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], 'r.', alpha=0.5, label='Masked Pixels')
+            plt.axvline(ans.x[3])
+
+            plt.legend()
+            plt.xlabel('Dark Values')
+            plt.ylabel('Image/(Scaled Dark) Values')
+
+            plt.show()
+
     else:
         msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
         raise ValueError(msg)
@@ -230,7 +257,7 @@ def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=
     return scaled_image
 
 
-def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000):
+def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000, debug=False):
     """"""
 
     data = image.flatten()
@@ -255,9 +282,94 @@ def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000):
         scaled_data = seg_func(ans.x, data)
         scaled_image = scaled_data.reshape(image.shape)
 
+        if debug:
+            xfit = np.linspace(min1, max1, 200)
+            yfit = seg_func(ans.x, xfit)
+
+            plt.subplot(211)
+            plt.loglog(data[mask], ref_data[mask], 'g.', label='Used pixels.')
+            plt.loglog(data[~mask], ref_data[~mask], 'r.', alpha=0.5, label='Masked pixels.')
+            plt.plot(data_bin, ref_data_bin, 'o', zorder=10, label='Median-binned values.')
+            plt.plot(xfit, yfit, 'k', label='Scaling-fit')
+            plt.axvline(ans.x[3])
+
+            plt.legend()
+            plt.ylabel('Image Values')
+
+            plt.subplot(212)
+            plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], 'g.', label='Used Pixels')
+            plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], 'r.', alpha=0.5, label='Masked Pixels')
+            plt.axvline(ans.x[3])
+
+            plt.legend()
+            plt.xlabel('Dark Values')
+            plt.ylabel('Image/(Scaled Dark) Values')
+
+            plt.show()
+
     else:
         msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
         raise ValueError(msg)
+
+    return scaled_image
+
+
+def scale_image_logspace(image, ref_image, maxiter=2, nbins=20, b1=100, m1=0.3, m2=1.3, tp=2000, debug=False):
+    """"""
+
+    data = image.flatten()
+    ref_data = ref_image.flatten()
+
+    x0 = [b1, m1, m2, tp]
+    mask = (data > 0)
+
+    for niter in range(maxiter):
+
+        if np.sum(mask) > 5000:
+
+            minval, maxval = np.amin(data[mask]), np.amax(data[mask])
+
+            binedges = np.logspace(np.log10(minval), np.log10(maxval), nbins + 1)
+            data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], None, binedges=binedges)
+
+            ans = optimize.least_squares(ls_seg_func, x0, args=[data_bin, ref_data_bin, err_bin])
+
+            scaled_data = seg_func(ans.x, data)
+            scaled_image = scaled_data.reshape(image.shape)
+
+            if debug:
+
+                xfit = np.logspace(np.log10(minval), np.log10(maxval), 200)
+                yfit = seg_func(ans.x, xfit)
+
+                plt.subplot(211)
+                plt.loglog(data[mask], ref_data[mask], 'g.', label='Used pixels.')
+                plt.loglog(data[~mask], ref_data[~mask], 'r.', alpha=0.5, label='Masked pixels.')
+                plt.plot(data_bin, ref_data_bin, 'o', zorder=10, label='Median-binned values.')
+                plt.plot(xfit, yfit, 'k', label='Scaling-fit')
+                plt.axvline(ans.x[3])
+
+                plt.legend()
+                plt.ylabel('Image Values')
+
+                plt.subplot(212)
+                plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], 'g.', label='Used Pixels')
+                plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], 'r.', alpha=0.5, label='Masked Pixels')
+                plt.axvline(ans.x[3])
+
+                plt.legend()
+                plt.xlabel('Dark Values')
+                plt.ylabel('Image/(Scaled Dark) Values')
+
+                plt.show()
+
+            x0 = ans.x
+            ratio = ref_data / scaled_data
+            mask = (ratio > 0.5) & (ratio < 2) & (data > 0)
+
+        else:
+            msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
+            raise ValueError(msg)
 
     return scaled_image
 
@@ -280,7 +392,8 @@ def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000
         ref_image = alldarkdata[0]
 
         # newdark = scale_image(image, ref_image, mind=mind, maxd=maxd, b1=b1, m1=m1, m2=m2, tp=tp)
-        newdark = scale_image_zscale(image, ref_image, b1=b1, m1=m1, m2=m2, tp=tp)
+        # newdark = scale_image_zscale(image, ref_image, b1=b1, m1=m1, m2=m2, tp=tp)
+        newdark = scale_image_logspace(image, ref_image, b1=b1, m1=m1, m2=m2, tp=tp)
         darkscaled.append(newdark)
 
     darkscaled = np.array(darkscaled)
@@ -622,7 +735,8 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
 
         # New Dark-correction. Not extensively tested. No Fortran dependence.
         # newdark = scale_image(darkavg, scidata_cor)
-        newdark = scale_image_zscale(darkavg, scidata_cor)
+        # newdark = scale_image_zscale(darkavg, scidata_cor)
+        newdark = scale_image_logspace(darkavg, scidata_cor)
         scidata_cord = scidata_cor - newdark
 
     # Return if only clipping and overscan is performed.
