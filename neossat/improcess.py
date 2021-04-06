@@ -663,6 +663,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
     NAXIS1 = hdr['NAXIS1']
     NAXIS2 = hdr['NAXIS2']
     hdul.close()
+
     # Set flags of what needs to be performed.
     if not NAXIS2 == xsc or not NAXIS1 == ysc:
         cor = True
@@ -683,15 +684,12 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         # Crop Overscan.
         sh = scidata.shape
 
-        otrim = np.array([sh[0]-xov, sh[0], 0, yov])
+        otrim = np.array([sh[0] - xov, sh[0], 0, yov])
         overscan = np.copy(scidata[otrim[0]:otrim[1], otrim[2]:otrim[3]])
-        mean = 0.0
-        for i in range(yov):
-            med = np.median(overscan[:, i])
-            overscan[:, i] = overscan[:, i]-med
-            mean = mean+med
-        mean = mean/yov
-        overscan = overscan+mean  # Add mean back to overscan (this is the BIAS).
+        med = np.median(overscan, axis=0)
+        overscan = overscan - med
+        mean = np.mean(med)
+        overscan = overscan + mean  # Add mean back to overscan (this is the BIAS).
 
         if info >= 2:
             imstat = utils.imagestat(overscan, bpix)
