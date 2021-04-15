@@ -28,7 +28,7 @@ def columncor(scidata, bpix):
     return scidata_colcor
 
 
-def combine(imagefiles, ilow, ihigh, bpix):
+def combine(imagefiles, ilow, ihigh, bpix):  # TODO obsolete?
     """Usage: masterimage = combine(imagefiles)"""
 
     # Read in first image.
