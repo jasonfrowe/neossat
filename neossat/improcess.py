@@ -15,6 +15,8 @@ from photutils import DAOStarFinder, CircularAperture, aperture_photometry
 from . import utils
 from . import visualize
 
+import matplotlib.pyplot as plt
+
 
 def columncor(scidata, bpix):
     """"""
@@ -26,7 +28,7 @@ def columncor(scidata, bpix):
     return scidata_colcor
 
 
-def combine(imagefiles, ilow, ihigh, bpix):
+def combine(imagefiles, ilow, ihigh, bpix):  # TODO obsolete?
     """Usage: masterimage = combine(imagefiles)"""
 
     # Read in first image.
@@ -105,7 +107,7 @@ def func(a, xn, yn, xoff, yoff, overscan):  # TODO more descriptive function nam
     return diffflat
 
 
-def funcphase(aoff, a, xn, yn, scidata_in, stdcut=None):
+def funcphase(aoff, a, xn, yn, scidata_in, mask=None):
     """Determine phase offset for science image."""
 
     xoff = aoff[0]
@@ -118,10 +120,9 @@ def funcphase(aoff, a, xn, yn, scidata_in, stdcut=None):
     else:
         diff = (scidata_in - model)
 
-    if stdcut is not None:
+    if mask is not None:
 
-        diffflat = diff.flatten()
-        diffflat[np.abs(diffflat) > stdcut] = 0.0
+        diffflat = diff[mask].flatten()
 
         return diffflat
 
@@ -132,17 +133,21 @@ def fouriercor(scidata_in, a):
     """Apply Fourier correction from overscan."""
 
     xn, yn = scidata_in.shape
-    scidata_z = scidata_in - np.median(scidata_in)
+
+    # Compute statistics and median subtract the data.
+    mean, median, stddev = sigma_clipped_stats(scidata_in)
+    scidata_z = scidata_in - median
 
     # Perform an initial fit.
     aoff = np.array([0.5, 0.5])
-    stdcut = 1.0e30
-    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
+    mask = np.abs(scidata_z) < 3*stddev
+    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, mask), factor=1)
 
     # Apply a sigma cut, to reduce the effect of stars in the image.
     diff = funcphase(aoff, a, xn, yn, scidata_z)
-    stdcut = 3.0*np.std(diff)
-    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, stdcut), factor=1)
+    mean, median, stddev = sigma_clipped_stats(diff)
+    mask = np.abs(diff) < 3.0*stddev
+    aoff, ier = optimize.leastsq(funcphase, aoff, args=(a, xn, yn, scidata_z, mask), factor=1)
 
     # Remove the final model from the data.
     xoff, yoff = aoff
@@ -152,7 +157,7 @@ def fouriercor(scidata_in, a):
     return scidata_cor
 
 
-def overscan_cor(scidata_c, overscan, a, bpix):
+def overscan_cor(scidata_c, overscan, a, bpix):  # TODO unused parameter?
     """"""
 
     scidata_co = fouriercor(scidata_c, a)
@@ -203,7 +208,7 @@ def darkprocess(workdir, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff,
     return scidata_cor
 
 
-def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):
+def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000, debug=False):
     """"""
 
     data = image.flatten()
@@ -211,7 +216,7 @@ def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=
 
     mask = (data > mind) & (data < maxd) & (ref_data > mind) & (ref_data < maxd)
 
-    if np.sum(mask) > 10:
+    if np.sum(mask) > 5000:
         data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], 50)
 
         x0 = [b1, m1, m2, tp]
@@ -220,10 +225,39 @@ def scale_image(image, ref_image, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=
         scaled_data = seg_func(ans.x, data)
         scaled_image = scaled_data.reshape(image.shape)
 
+        if debug:
+            xfit = np.logspace(-3, np.log10(maxd), 200)
+            yfit = seg_func(ans.x, xfit)
+
+            plt.subplot(211)
+            plt.loglog(data[mask], ref_data[mask], 'g.', label='Used pixels.')
+            plt.loglog(data[~mask], ref_data[~mask], 'r.', alpha=0.5, label='Masked pixels.')
+            plt.plot(data_bin, ref_data_bin, 'o', zorder=10, label='Median-binned values.')
+            plt.plot(xfit, yfit, 'k', label='Scaling-fit')
+            plt.axvline(ans.x[3])
+
+            plt.legend()
+            plt.ylabel('Image Values')
+
+            plt.subplot(212)
+            plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], 'g.', label='Used Pixels')
+            plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], 'r.', alpha=0.5, label='Masked Pixels')
+            plt.axvline(ans.x[3])
+
+            plt.legend()
+            plt.xlabel('Dark Values')
+            plt.ylabel('Image/(Scaled Dark) Values')
+
+            plt.show()
+
+    else:
+        msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
+        raise ValueError(msg)
+
     return scaled_image
 
 
-def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000):
+def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000, debug=False):
     """"""
 
     data = image.flatten()
@@ -234,8 +268,13 @@ def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000):
 
     mask = (data > min1) & (data < max1) & (ref_data > min2) & (ref_data < max2)
 
-    if np.sum(mask) > 10:
-        data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], 50)
+    if np.sum(mask) > 5000:
+
+        binsize = 50
+        if np.ptp(data[mask])/binsize < 10:
+            binsize = np.ceil(np.ptp(data[mask])/10)
+
+        data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], binsize)
 
         x0 = [b1, m1, m2, tp]
         ans = optimize.least_squares(ls_seg_func, x0, args=[data_bin, ref_data_bin, err_bin])
@@ -243,10 +282,99 @@ def scale_image_zscale(image, ref_image, b1=100, m1=0.3, m2=1.3, tp=2000):
         scaled_data = seg_func(ans.x, data)
         scaled_image = scaled_data.reshape(image.shape)
 
+        if debug:
+            xfit = np.linspace(min1, max1, 200)
+            yfit = seg_func(ans.x, xfit)
+
+            plt.subplot(211)
+            plt.loglog(data[mask], ref_data[mask], 'g.', label='Used pixels.')
+            plt.loglog(data[~mask], ref_data[~mask], 'r.', alpha=0.5, label='Masked pixels.')
+            plt.plot(data_bin, ref_data_bin, 'o', zorder=10, label='Median-binned values.')
+            plt.plot(xfit, yfit, 'k', label='Scaling-fit')
+            plt.axvline(ans.x[3])
+
+            plt.legend()
+            plt.ylabel('Image Values')
+
+            plt.subplot(212)
+            plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], 'g.', label='Used Pixels')
+            plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], 'r.', alpha=0.5, label='Masked Pixels')
+            plt.axvline(ans.x[3])
+
+            plt.legend()
+            plt.xlabel('Dark Values')
+            plt.ylabel('Image/(Scaled Dark) Values')
+
+            plt.show()
+
+    else:
+        msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
+        raise ValueError(msg)
+
     return scaled_image
 
 
-def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):
+def scale_image_logspace(image, ref_image, maxiter=2, nbins=20, b1=100, m1=0.3, m2=1.3, tp=2000, debug=False):
+    """"""
+
+    data = image.flatten()
+    ref_data = ref_image.flatten()
+
+    x0 = [b1, m1, m2, tp]
+    mask = (data > 0)
+
+    for niter in range(maxiter):
+
+        if np.sum(mask) > 5000:
+
+            minval, maxval = np.amin(data[mask]), np.amax(data[mask])
+
+            binedges = np.logspace(np.log10(minval), np.log10(maxval), nbins + 1)
+            data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], None, binedges=binedges)
+
+            ans = optimize.least_squares(ls_seg_func, x0, args=[data_bin, ref_data_bin, err_bin])
+
+            scaled_data = seg_func(ans.x, data)
+            scaled_image = scaled_data.reshape(image.shape)
+
+            if debug:
+
+                xfit = np.logspace(np.log10(minval), np.log10(maxval), 200)
+                yfit = seg_func(ans.x, xfit)
+
+                plt.subplot(211)
+                plt.loglog(data[mask], ref_data[mask], 'g.', label='Used pixels.')
+                plt.loglog(data[~mask], ref_data[~mask], 'r.', alpha=0.5, label='Masked pixels.')
+                plt.plot(data_bin, ref_data_bin, 'o', zorder=10, label='Median-binned values.')
+                plt.plot(xfit, yfit, 'k', label='Scaling-fit')
+                plt.axvline(ans.x[3])
+
+                plt.legend()
+                plt.ylabel('Image Values')
+
+                plt.subplot(212)
+                plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], 'g.', label='Used Pixels')
+                plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], 'r.', alpha=0.5, label='Masked Pixels')
+                plt.axvline(ans.x[3])
+
+                plt.legend()
+                plt.xlabel('Dark Values')
+                plt.ylabel('Image/(Scaled Dark) Values')
+
+                plt.show()
+
+            x0 = ans.x
+            ratio = ref_data / scaled_data
+            mask = (ratio > 0.5) & (ratio < 2) & (data > 0)
+
+        else:
+            msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
+            raise ValueError(msg)
+
+    return scaled_image
+
+
+def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000):  # TODO unused parameters.
     """
     mind,maxd : range of data to consider when matching frames.  Keeping maxd relatively low avoids stars
     [b1,m1,m2,tp] - initial guess for solution.
@@ -264,7 +392,8 @@ def combinedarks(alldarkdata, mind=0, maxd=8000, b1=100, m1=0.3, m2=1.3, tp=2000
         ref_image = alldarkdata[0]
 
         # newdark = scale_image(image, ref_image, mind=mind, maxd=maxd, b1=b1, m1=m1, m2=m2, tp=tp)
-        newdark = scale_image_zscale(image, ref_image, b1=b1, m1=m1, m2=m2, tp=tp)
+        # newdark = scale_image_zscale(image, ref_image, b1=b1, m1=m1, m2=m2, tp=tp)
+        newdark = scale_image_logspace(image, ref_image, b1=b1, m1=m1, m2=m2, tp=tp)
         darkscaled.append(newdark)
 
     darkscaled = np.array(darkscaled)
@@ -283,7 +412,9 @@ def find_line_model(points):
     #           here we just add some noise to avoid division by zero
 
     # find a line model for these points
-    m = (points[1, 1] - points[0, 1])/(points[1, 0] - points[0, 0] + sys.float_info.epsilon)  # Slope (gradient) of the line.
+    num = (points[1, 1] - points[0, 1])
+    denom = (points[1, 0] - points[0, 0] + sys.float_info.epsilon)
+    m = num/denom  # Slope (gradient) of the line.
     c = points[1, 1] - m*points[1, 0]  # y-intercept of the line.
 
     return m, c
@@ -369,9 +500,6 @@ def darkcorrect(scidata, masterdark, bpix):
                 y_list.append(y0)
                 num += 1
 
-        x_inliers = np.array(x_list)
-        y_inliers = np.array(y_list)
-
         # In case a new model is better - cache it.
         if num/float(n_samples) > ratio:
             ratio = num/float(n_samples)
@@ -381,9 +509,6 @@ def darkcorrect(scidata, masterdark, bpix):
         # print ('  inlier ratio = ', num/float(n_samples))
         # print ('  model_m = ', model_m)
         # print ('  model_c = ', model_c)
-
-        # Plot the current step.
-        # ransac_plot(it, x_noise,y_noise, m, c, False, x_inliers, y_inliers, maybe_points)
 
         # We are done in case we have enough inliers.
         if num > n_samples*ransac_ratio:
@@ -433,7 +558,6 @@ def fourierdecomp(overscan, snrcut, fmax, xoff, yoff, T, bpix, info=0):
 
     # Calculate Median of overscan region.
     med_overscan = np.median(overscan)
-    std_overscan = np.std(overscan - med_overscan)
 
     # Size of Overscan.
     xn = overscan.shape[0]
@@ -539,6 +663,7 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
     NAXIS1 = hdr['NAXIS1']
     NAXIS2 = hdr['NAXIS2']
     hdul.close()
+
     # Set flags of what needs to be performed.
     if not NAXIS2 == xsc or not NAXIS1 == ysc:
         cor = True
@@ -559,15 +684,12 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
         # Crop Overscan.
         sh = scidata.shape
 
-        otrim = np.array([sh[0]-xov, sh[0], 0, yov])
+        otrim = np.array([sh[0] - xov, sh[0], 0, yov])
         overscan = np.copy(scidata[otrim[0]:otrim[1], otrim[2]:otrim[3]])
-        mean = 0.0
-        for i in range(yov):
-            med = np.median(overscan[:, i])
-            overscan[:, i] = overscan[:, i]-med
-            mean = mean+med
-        mean = mean/yov
-        overscan = overscan+mean  # Add mean back to overscan (this is the BIAS).
+        med = np.median(overscan, axis=0)
+        overscan = overscan - med
+        mean = np.mean(med)
+        overscan = overscan + mean  # Add mean back to overscan (this is the BIAS).
 
         if info >= 2:
             imstat = utils.imagestat(overscan, bpix)
@@ -611,7 +733,8 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
 
         # New Dark-correction. Not extensively tested. No Fortran dependence.
         # newdark = scale_image(darkavg, scidata_cor)
-        newdark = scale_image_zscale(darkavg, scidata_cor)
+        # newdark = scale_image_zscale(darkavg, scidata_cor)
+        newdark = scale_image_logspace(darkavg, scidata_cor)
         scidata_cord = scidata_cor - newdark
 
     # Return if only clipping and overscan is performed.
@@ -664,7 +787,11 @@ def lightprocess_save(filename, savedir, darkavg, xsc, ysc, xov, yov, snrcut, fm
     # Set up new file name for cleaned image.
     base = os.path.basename(filename)
     x = os.path.splitext(base)
-    newfile = os.path.join(savedir, x[0] + "_cord.fits")
+
+    if len(darkavg) != 0:
+        newfile = os.path.join(savedir, x[0] + "_cord.fits")
+    else:
+        newfile = os.path.join(savedir, x[0] + "_cor.fits")
 
     # Write the file.
     # header = fits.getheader(filename)
@@ -684,7 +811,7 @@ def lightprocess_save(filename, savedir, darkavg, xsc, ysc, xov, yov, snrcut, fm
     return info
 
 
-def main(target, obspath, savedir, **kwargs):
+def calibrate_observations(target, obspath, savedir, **kwargs):
     """Process all observations of a specific target in a specific directory."""
 
     # Make sure output directory exists.
@@ -698,6 +825,7 @@ def main(target, obspath, savedir, **kwargs):
     xoff = kwargs.pop('xoff', 0)
     yoff = kwargs.pop('yoff', 0)
     nproc = kwargs.pop('nproc', 4)
+    save_cor_files = kwargs.pop('save_cor_files', False)
 
     print('Processing observations in directory {}'.format(obspath))
 
@@ -722,7 +850,7 @@ def main(target, obspath, savedir, **kwargs):
             xsc, ysc = dark_table['xsc'][i], dark_table['ysc'][i]
             xov, yov = dark_table['xov'][i], dark_table['yov'][i]
 
-            args = (obspath, darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
+            args = ('.', darkfile, xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
 
             results.append(p.apply_async(darkprocess, args=args, callback=lambda x: pbar.update()))
 
@@ -736,13 +864,13 @@ def main(target, obspath, savedir, **kwargs):
     # Combine the processed darks to obtain a master dark.
     masterdark = combinedarks(alldarkdata)
 
-    # Display the master dark.
-#    imstat = utils.imagestat(masterdark, bpix)
-#    visualize.plot_image(masterdark, imstat, 0.3, 10.0)
+    # Plot the master dark.
+    imstat = utils.imagestat(masterdark, bpix)
+    figname = os.path.join(savedir, target + '_masterdark.png')
+    visualize.plot_image(masterdark, imstat, 1.0, 50.0, figname=figname, display=False)
 
     # Save the masterdark.
-    head, tail = os.path.split(obspath)
-    darkname = 'masterdark_{}_{}.fits'.format(tail, target)
+    darkname = '{}_masterdark.fits'.format(target)
     darkname = os.path.join(savedir, darkname)
     hdu = fits.PrimaryHDU(masterdark)
     hdu.writeto(darkname, overwrite=True)
@@ -759,7 +887,7 @@ def main(target, obspath, savedir, **kwargs):
 
         for i in range(nlight):
 
-            filename = os.path.join(obspath, light_table['FILENAME'][i])
+            filename = light_table['FILENAME'][i]
             xsc, ysc = light_table['xsc'][i], light_table['ysc'][i]
             xov, yov = light_table['xov'][i], light_table['yov'][i]
 
@@ -771,6 +899,33 @@ def main(target, obspath, savedir, **kwargs):
         p.join()
 
     pbar.close()
+
+    if save_cor_files:
+
+        print('Processing {} light images without dark correction.'.format(nlight))
+
+        # Use multiproessing to process all light images.
+        pbar = tqdm.tqdm(total=nlight)
+        with mp.Pool(nproc) as p:
+
+            for i in range(nlight):
+                filename = light_table['FILENAME'][i]
+                xsc, ysc = light_table['xsc'][i], light_table['ysc'][i]
+                xov, yov = light_table['xov'][i], light_table['yov'][i]
+
+                args = (filename, savedir, [], xsc, ysc, xov, yov, snrcut, fmax, xoff, yoff, T, bpix)
+
+                p.apply_async(lightprocess_save, args=args, callback=lambda x: pbar.update())
+
+            p.close()
+            p.join()
+
+        pbar.close()
+
+    return
+
+
+def main():
 
     return
 
