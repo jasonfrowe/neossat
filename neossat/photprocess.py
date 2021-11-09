@@ -243,7 +243,7 @@ def extract_photometry(workdir, outname, **kwargs):
     margin = kwargs.pop('margin', 10)
     nmax = kwargs.pop('nmax', 100)  # TODO should probably be None.
 
-    obs_table = utils.observation_table([workdir], header_keys=['RA_VEL', 'DEC_VEL', 'CCD-TEMP'])
+    obs_table = utils.observation_table([workdir], globstr='NEOS_*_cord.fits', header_keys=['RA_VEL', 'DEC_VEL', 'CCD-TEMP'])
     nobs = len(obs_table)
 
     # Creat an image flag and flag bad tracking.
