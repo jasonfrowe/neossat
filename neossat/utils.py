@@ -226,6 +226,26 @@ def read_fitsdata(filename):
     return scidata_float
 
 
+def read_rawfile(filename):
+    """Read a raw NEOSSat file and return the science and overscan arrays."""
+
+    trim, btrim, xsc, ysc, xov, yov = getimage_dim(filename)
+
+    # Read image.
+    data = read_fitsdata(filename)
+    sh = data.shape
+
+    # Crop Science Image.
+    strim = np.array([sh[0] - xsc, sh[0], sh[1] - ysc, sh[1]])
+    scidata = np.copy(data[strim[0]:strim[1], strim[2]:strim[3]])
+
+    # Crop Overscan.
+    otrim = np.array([sh[0] - xov, sh[0], 0, yov])
+    overscan = np.copy(data[otrim[0]:otrim[1], otrim[2]:otrim[3]])
+
+    return scidata, overscan
+
+
 def read_file_list(filelist):
     """Usage files = read_file_list(filelist)"""
 
@@ -239,7 +259,7 @@ def read_file_list(filelist):
     return files
 
 
-def observation_table(obsdirs, header_keys=None):
+def observation_table(obsdirs, globstr='NEOS_*.fits', header_keys=None):
     """ Given a directory containing NEOSSat observations create a table of the observations. """
 
     # List of mandatory header keys.
@@ -253,7 +273,7 @@ def observation_table(obsdirs, header_keys=None):
     # Get a list of all fits files in the specified directory.
     filelist = []
     for obsdir in obsdirs:
-        filelist += glob.glob(os.path.join(obsdir, 'NEOS_*.fits'))
+        filelist += glob.glob(os.path.join(obsdir, globstr))
 
     # Read all the headers.
     headers = []
@@ -306,8 +326,8 @@ def observation_table(obsdirs, header_keys=None):
     obs_table['ysc'] = ysc
     obs_table['xov'] = xov
     obs_table['yov'] = yov
-    obs_table['mode'] = [int(header['MODE'][:2]) for header in headers]
-    obs_table['shutter'] = [int(header['SHUTTER'][0]) for header in headers]
+    obs_table['mode'] = [-1 if header['MODE'] == 'XX - N/A' else int(header['MODE'][:2]) for header in headers]
+    obs_table['shutter'] = [-1 if header['SHUTTER'] == 'TBD' else int(header['SHUTTER'][0]) for header in headers]
 
     # Sort the table by observaion date.
     obs_table['JD-OBS'] = obs_table['JD-OBS'].astype(float)
