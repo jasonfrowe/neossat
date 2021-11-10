@@ -325,51 +325,63 @@ def scale_image_logspace(image, ref_image, maxiter=2, nbins=20, b1=100, m1=0.3, 
 
     for niter in range(maxiter):
 
-        if np.sum(mask) > 5000:
-
-            minval, maxval = np.amin(data[mask]), np.amax(data[mask])
-
-            binedges = np.logspace(np.log10(minval), np.log10(maxval), nbins + 1)
-            data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], None, binedges=binedges)
-
-            ans = optimize.least_squares(ls_seg_func, x0, args=[data_bin, ref_data_bin, err_bin])
-
-            scaled_data = seg_func(ans.x, data)
-            scaled_image = scaled_data.reshape(image.shape)
-
-            if debug:
-
-                xfit = np.logspace(np.log10(minval), np.log10(maxval), 200)
-                yfit = seg_func(ans.x, xfit)
-
-                plt.subplot(211)
-                plt.loglog(data[mask], ref_data[mask], 'g.', label='Used pixels.')
-                plt.loglog(data[~mask], ref_data[~mask], 'r.', alpha=0.5, label='Masked pixels.')
-                plt.plot(data_bin, ref_data_bin, 'o', zorder=10, label='Median-binned values.')
-                plt.plot(xfit, yfit, 'k', label='Scaling-fit')
-                plt.axvline(ans.x[3])
-
-                plt.legend()
-                plt.ylabel('Image Values')
-
-                plt.subplot(212)
-                plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], 'g.', label='Used Pixels')
-                plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], 'r.', alpha=0.5, label='Masked Pixels')
-                plt.axvline(ans.x[3])
-
-                plt.legend()
-                plt.xlabel('Dark Values')
-                plt.ylabel('Image/(Scaled Dark) Values')
-
-                plt.show()
-
-            x0 = ans.x
-            ratio = ref_data / scaled_data
-            mask = (ratio > 0.5) & (ratio < 2) & (data > 0)
-
-        else:
+        if np.sum(mask) < 5000:
             msg = 'Too few good pixels to scale image, 5000 pixels are needed.'
             raise ValueError(msg)
+
+        # Bin the data to a fixed number of bins.
+        minval, maxval = np.amin(data[mask]), np.amax(data[mask])
+        binedges = np.logspace(np.log10(minval), np.log10(maxval), nbins + 1)
+        data_bin, ref_data_bin, err_bin = utils.bindata(data[mask], ref_data[mask], None, binedges=binedges)
+
+        # Fit a piece-wise linear function to scale the data to ref_data.
+        ans = optimize.least_squares(ls_seg_func, x0, args=[data_bin, ref_data_bin, err_bin])
+        x0 = ans.x
+
+        # Compute the scaled data and scaled image.
+        scaled_data = seg_func(ans.x, data)
+        scaled_image = scaled_data.reshape(image.shape)
+
+        # Make a diagnostic plot.
+        if debug:
+
+            xfit = np.logspace(np.log10(minval), np.log10(maxval), 200)
+            yfit = seg_func(ans.x, xfit)
+            yfit_bin = seg_func(ans.x, data_bin)
+
+            plt.subplot(211)
+            plt.loglog(data[mask], ref_data[mask], label='Used pixels.', c='C0', marker='.',
+                       markeredgecolor='None', linestyle='None', alpha=.5)
+            plt.loglog(data[~mask], ref_data[~mask], label='Masked pixels.', c='C1', marker='.',
+                       markeredgecolor='None', linestyle='None', alpha=.5)
+            plt.plot(data_bin, ref_data_bin, label='Median-binned values.', c='C2', marker='o',
+                     markeredgecolor='k', markersize=10, linestyle='None', zorder=10)
+            plt.plot(xfit, yfit, label='Best-fit scaling.', c='k')
+            plt.axvline(ans.x[3], c='C2')
+
+            plt.legend(numpoints=3)
+            plt.ylabel('Image Values')
+
+            plt.subplot(212)
+            plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], label='Used pixels.', c='C0', marker='.',
+                       markeredgecolor='None', linestyle='None', alpha=.5)
+            plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], label='Masked pixels.', c='C1', marker='.',
+                       markeredgecolor='None', linestyle='None', alpha=.5)
+            plt.plot(data_bin, ref_data_bin / yfit_bin, label='Median-binned values.', c='C2', marker='o',
+                     markeredgecolor='k', markersize=10, linestyle='None', zorder=10)
+
+            plt.axvline(ans.x[3], c='C2')
+            plt.axhline(1, c='k', ls='--')
+
+            plt.legend(numpoints=3)
+            plt.xlabel('Dark Values')
+            plt.ylabel('Ratio')
+
+            plt.show()
+
+        # Update the mask for the next iteration.
+        ratio = ref_data / scaled_data
+        mask = (ratio > 0.5) & (ratio < 2) & (data > 0)
 
     return scaled_image
 
