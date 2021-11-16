@@ -53,7 +53,7 @@ def bindata(time, data, binsize, binedges=None):
             bin_eflux[idx] = np.std(data[mask])/np.sqrt(npt)
 
     # Remove empty bins.
-    mask = bin_npt > 0
+    mask = bin_npt > 3
     bin_time = bin_time[mask]
     bin_flux = bin_flux[mask]
     bin_eflux = bin_eflux[mask]
