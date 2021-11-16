@@ -229,12 +229,17 @@ def parse_image_dim(header):
     n = len(trim)
     for i in range(n):
         trim[i] = int(trim[i])
-        btrim[i] = int(btrim[i])
+        if not len(btrim) == 0:
+            btrim[i] = int(btrim[i])
 
     xsc = int(trim[3]) - int(trim[2]) + 1
     ysc = int(trim[1]) - int(trim[0]) + 1
-    xov = int(btrim[3]) - int(btrim[2]) + 1  # I ignore the last few columns.
-    yov = int(btrim[1]) - int(btrim[0]) - 3
+    if not len(btrim) == 0:
+        xov = int(btrim[3]) - int(btrim[2]) + 1  # I ignore the last few columns.
+        yov = int(btrim[1]) - int(btrim[0]) - 3
+    else:
+        xov = 0
+        yov = 0
 
     return trim, btrim, xsc, ysc, xov, yov
 
