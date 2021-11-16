@@ -1,6 +1,7 @@
 import os
 import glob
 import re
+import warnings
 from collections import namedtuple
 
 import numpy as np
@@ -59,6 +60,40 @@ def bindata(time, data, binsize, binedges=None):
     bin_eflux = bin_eflux[mask]
 
     return bin_time, bin_flux, bin_eflux
+
+
+def bin_npbin(x, y, mask, npbin):
+    """Bin values into a fixed number of points per bin."""
+
+    # Sort the input by the x-values.
+    sort = np.argsort(x)
+    xsort = x[sort]
+    ysort = y[sort]
+    masksort = mask[sort]
+
+    # Replace masked values with NaN.
+    xsort = np.where(masksort, xsort, np.nan)
+    ysort = np.where(masksort, ysort, np.nan)
+
+    # Compute binned values.
+    newshape = (x.size//npbin, npbin)
+    with warnings.catch_warnings():
+
+        # Filter some warnings from fully masked bins.
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+
+        xbin = np.nanmedian(xsort.reshape(newshape), axis=1)
+        ybin = np.nanmedian(ysort.reshape(newshape), axis=1)
+        npoints = np.sum(masksort.reshape(newshape), axis=1)
+        errbin = np.nanstd(ysort.reshape(newshape), axis=1)/np.sqrt(npoints)
+
+    # Remove empty bins.
+    mask = npoints > 3
+    xbin = xbin[mask]
+    ybin = ybin[mask]
+    errbin = errbin[mask]
+
+    return xbin, ybin, errbin
 
 
 def meddiff(x):

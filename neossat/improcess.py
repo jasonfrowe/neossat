@@ -426,6 +426,90 @@ def scale_image_logspace(image, ref_image, pixfrac=0.5, nbins=20, maxiter=2, x0=
     return scaled_image, mask.reshape(image.shape), ans.x
 
 
+def scale_image_npbin(image, ref_image, pixfrac=0.5, npbin=64, maxiter=3, x0=None, debug=False):
+    """Scale an image to another image using an iterative scheme with
+    residual masking and fixed points per bin binning."""
+
+    # Initial parameters for the scaling relation.
+    if x0 is None:
+        x0 = [np.median(ref_image), 0.3, 1.3, np.median(image)]
+
+    # Number of pixels in the images.
+    npixels = image.size
+
+    # Flatten the images.
+    data = image.flatten()
+    ref_data = ref_image.flatten()
+
+    # Mask outliers in the difference for the 1st iteration.
+    diff = ref_data - data
+    mean, median, stddev = sigma_clipped_stats(diff, sigma=3.0, maxiters=5)
+    mask = np.abs(diff - median) < 10. * stddev
+
+    # Iterate while masking outliers in the residual.
+    for niter in range(maxiter):
+
+        # If there are not enough good pixels return an error.
+        if np.sum(mask) < pixfrac * npixels:
+            msg = 'Too few good pixels to scale image, at least {}% of pixels are needed.'.format(pixfrac * 100)
+            raise ValueError(msg)
+
+        # Bin the data using a fixed number of points per bin.
+        data_bin, ref_data_bin, err_bin = utils.bin_npbin(data, ref_data, mask, npbin)
+
+        # Fit a piece-wise linear function to scale the data to ref_data.
+        ans = optimize.least_squares(ls_seg_func, x0, args=[data_bin, ref_data_bin, err_bin], bounds=(0, np.inf))
+
+        # Compute the scaled data and scaled image.
+        scaled_data = seg_func(ans.x, data)
+        scaled_image = scaled_data.reshape(image.shape)
+
+        if debug:
+
+            # Compute the best-fit curve.
+            xfit = np.linspace(np.amin(data), np.amax(data), 200)
+            yfit = seg_func(ans.x, xfit)
+            yfit_bin = seg_func(ans.x, data_bin)
+
+            # Make a diagnostic plot.
+            plt.subplot(211)
+            plt.loglog(data[mask], ref_data[mask], label='Used pixels.', c='C0', marker='.',
+                       markeredgecolor='None', linestyle='None', alpha=.5)
+            plt.loglog(data[~mask], ref_data[~mask], label='Masked pixels.', c='C1', marker='.',
+                       markeredgecolor='None', linestyle='None', alpha=.5)
+            plt.plot(data_bin, ref_data_bin, label='Median-binned values.', c='C2', marker='o',
+                     markeredgecolor='k', markersize=10, linestyle='None', zorder=10)
+            plt.plot(xfit, yfit, label='Best-fit scaling.', c='k')
+            plt.axvline(ans.x[3], c='C2')
+
+            plt.legend(numpoints=3)
+            plt.ylabel('Image Values')
+
+            plt.subplot(212)
+            plt.loglog(data[mask], ref_data[mask] / scaled_data[mask], label='Used pixels.', c='C0', marker='.',
+                       markeredgecolor='None', linestyle='None', alpha=.5)
+            plt.loglog(data[~mask], ref_data[~mask] / scaled_data[~mask], label='Masked pixels.', c='C1', marker='.',
+                       markeredgecolor='None', linestyle='None', alpha=.5)
+            plt.plot(data_bin, ref_data_bin / yfit_bin, label='Median-binned values.', c='C2', marker='o',
+                     markeredgecolor='k', markersize=10, linestyle='None', zorder=10)
+
+            plt.axvline(ans.x[3], c='C2')
+            plt.axhline(1, c='k', ls='--')
+
+            plt.legend(numpoints=3)
+            plt.xlabel('Dark Values')
+            plt.ylabel('Ratio')
+
+            plt.show()
+
+        # Update the mask for the next iteration.
+        residual = ref_data - scaled_data
+        mean, median, stddev = sigma_clipped_stats(residual, sigma=3.0, maxiters=5)
+        mask = np.abs(residual - median) < 5. * stddev
+
+    return scaled_image, mask.reshape(image.shape), ans.x
+
+
 def combinedarks(alldarkdata, darkmode='logspace', **kwargs):
     """Combine the individual dark images."""
 
@@ -444,6 +528,8 @@ def combinedarks(alldarkdata, darkmode='logspace', **kwargs):
             newdark, _, _ = scale_image_zscale(image, ref_image, **kwargs)
         elif darkmode == 'logspace':
             newdark, _, _ = scale_image_logspace(image, ref_image, **kwargs)
+        elif darkmode == 'npbin':
+            newdark, _, _ = scale_image_npbin(image, ref_image, **kwargs)
         else:
             msg = 'Unknown darkmode parameter: {}'.format(darkmode)
             raise ValueError(msg)
@@ -769,6 +855,8 @@ def clean_sciimage(filename, darkavg, xsc, ysc, xov, yov, snrcut, fmax, xoff, yo
             newdark, _, _ = scale_image_zscale(darkavg, scidata_cor)
         elif darkmode == 'logspace':
             newdark, _, _ = scale_image_logspace(darkavg, scidata_cor)
+        elif darkmode == 'npbin':
+            newdark, _, _ = scale_image_npbin(darkavg, scidata_cor)
         else:
             msg = 'Unknown darkmode parameter: {}'.format(darkmode)
             raise ValueError(msg)
