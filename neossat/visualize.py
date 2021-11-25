@@ -67,7 +67,7 @@ def plot_image_wsource(scidata, imstat, sigscalel, sigscaleh, sources=None, xy=N
     return
 
 
-def plot_image(scidata, imstat, sigscalel, sigscaleh):
+def plot_image(scidata, imstat, sigscalel, sigscaleh, figname=None, display=True):
     """"""
 
     eps = 1.0e-9
@@ -81,10 +81,18 @@ def plot_image(scidata, imstat, sigscalel, sigscaleh):
     vmax = np.max(flat[flat < imstat[2] + imstat[3] * sigscaleh]) - imstat[0] + eps
 
     plt.figure(figsize=(20, 20))  # Adjust size of figure.
-    imgplot = plt.imshow(scidata[:, :] - imstat[0], norm=LogNorm(), vmin=vmin, vmax=vmax)
-    plt.axis((0, scidata.shape[1], 0, scidata.shape[0]))
+
+    imgplot = plt.imshow(scidata - imstat[0], norm=LogNorm(), vmin=vmin, vmax=vmax)
+    plt.axis((-0.5, scidata.shape[1]-0.5, -0.5, scidata.shape[0]-0.5))
     plt.xlabel("Column (Pixels)")
     plt.ylabel("Row (Pixels)")
-    plt.show()
+
+    if figname is not None:
+        plt.savefig(figname)
+
+    if display:
+        plt.show()
+
+    plt.close()
 
     return

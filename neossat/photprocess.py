@@ -1,893 +1,340 @@
 import os.path
+import multiprocessing as mp
 
-import math  # TODO I think numpy is preferred over math these days.
+import tqdm
 import numpy as np
-from scipy import optimize
-from scipy import spatial
-from scipy.linalg import lapack
+from skimage import transform
 
+from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
-from photutils import DAOStarFinder, CircularAperture, aperture_photometry
+from astropy.modeling import models, fitting
+from photutils import DAOStarFinder
+import astroalign
 
 from . import utils
+from . import visualize
+from .photometry import Photometry
 
 
-def photprocess(filename, date, photap, bpix):
+def find_sources(scidata, margin=10, nmax=None):
+    """Detect stars in the science image."""
+
+    # Initialize the DAOStarFinder.
+    mean, median, stddev = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
+    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*stddev, exclude_border=True)
+
+    # Mask a border around the edge of the image.
+    mask = np.zeros_like(scidata, dtype='bool')
+    mask[:margin] = True
+    mask[-margin:] = True
+    mask[:, :margin] = True
+    mask[:, -margin:] = True
+
+    # Find sources in the image.
+    sources = daofind(scidata - median, mask=mask)
+
+    # Sort the sources from brightest to faintest.
+    invsort = np.argsort(sources['flux'])[::-1]
+    sources = sources[invsort]
+
+    # If nmax is given pick only the nmax brightest sources.
+    if nmax is not None:
+        nmax = np.minimum(len(sources), nmax)
+        sources = sources[:nmax]
+
+    return sources
+
+
+def psf_profile(image, x, y, radius):
     """"""
 
-    scidata = utils.read_fitsdata(filename)
+    nrows, ncols = image.shape
 
-    mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
-    daofind = DAOStarFinder(fwhm=2.0, threshold=5.*std)
-    sources = daofind(scidata - median)
+    # Build coordinate grid.
+    xtmp = np.arange(ncols)
+    ytmp = np.arange(nrows)
+    xgrid, ygrid = np.meshgrid(xtmp, ytmp)
 
-    positions = np.column_stack([sources['xcentroid'], sources['ycentroid']])
-    apertures = CircularAperture(positions, r=photap)
-    phot_table = aperture_photometry(scidata - median, apertures)
+    # Compute distance relative to position.
+    rad = np.sqrt((xgrid - x)**2 + (ygrid - y)**2)
 
-    return [phot_table, date, mean, median, std, filename]
+    # Select pixels within a certain distance.
+    mask = rad <= radius
+    rpix = rad[mask]
+    pixvals = image[mask]
+
+    # Estimate the amplitude.
+    w = np.exp(-0.5*(rpix/2.)**2)
+    amp = np.sum(w*pixvals)/np.sum(w**2)
+
+    # Initialize the model.
+    mod = models.Gaussian1D(amplitude=amp, mean=0., stddev=2.)
+    mod.mean.fixed = True
+
+    # Find the best-fit model.
+    fit = fitting.LevMarLSQFitter()
+    modfit = fit(mod, rpix, pixvals)
+
+    # Convert stddev to fwhm.
+    fwhm = 2.*np.sqrt(2.*np.log(2.))*modfit.stddev
+
+    return rpix, pixvals, fwhm, modfit
 
 
-def pca_photcor(phot1, pcavec, npca, icut3=-1):
+def get_photometry(workdir, lightlist, xref, yref, offset, rot, aper=None, sky=None):
     """"""
 
-    npt = len(phot1)
-    if icut3 == -1:
-        icut3 = np.zeros(npt)
+    if aper is None:
+        aper = 2.5 + 0.5 * np.arange(11)
 
-    icut = utils.cutoutliers(phot1)
-    icut2 = utils.sigclip(phot1, icut)
-    icut = icut + icut2 + icut3
-    phot1 = utils.replaceoutlier(phot1, icut)
+    if sky is None:
+        sky = np.array([10, 15])
 
-    # Normalize flux.
-    median = np.median(phot1[icut == 0])
-    phot1 = phot1/median
+    # Get dimensions.
+    nimages = len(lightlist)
+    nstars = len(xref)
+    naper = len(aper)
 
-    pars = [np.median(phot1)]
-    for i in range(npca):
-        pars.append(0)
-    pars = np.array(pars)
+    # Create arrays.
+    xall = np.zeros((nimages, nstars))
+    yall = np.zeros((nimages, nstars))
+    flux = np.zeros((nimages, nstars, naper))
+    eflux = np.zeros((nimages, nstars, naper))
+    skybkg = np.zeros((nimages, nstars))
+    eskybkg = np.zeros((nimages, nstars))
+    fwhm = np.zeros((nimages, nstars))
+    photflag = np.zeros((nimages, nstars), dtype='uint8')
 
-    # Get PCA model.
-    for i in range(3):
-        ans = optimize.least_squares(pca_func, pars, args=[phot1, pcavec, icut])
-        print(ans.x)
-        corflux = phot1 - pca_model(ans.x, pcavec) + 1.0
-        icut2 = utils.cutoutliers(corflux)
-        icut = icut + icut2
+    # Initialize photometric extraction.
+    extract = Photometry(aper, sky)
 
-    return corflux, median, ans, icut
+    for i in tqdm.tqdm(range(nimages)):
 
+        # Read the image.
+        filename = os.path.join(workdir, lightlist[i])
+        scidata = utils.read_fitsdata(filename)
 
-def get_pcavec(photometry_jd, photometry, exptime, minflux=0, id_exclude=None):
-    """"""
+        # Compute star coordinates.
+        mat = rot[i]
+        invmat = np.linalg.inv(mat)
 
-    if id_exclude is None:
-        id_exclude = [-1]
+        xall[i] = -offset[i, 0] + invmat[0, 0] * xref + invmat[0, 1] * yref
+        yall[i] = -offset[i, 1] + invmat[1, 0] * xref + invmat[1, 1] * yref
 
-    nspl = len(photometry_jd)  # Number of samples (time stamps).
-    npca = len(photometry[0])  # Number of light curves.
-    xpca = np.zeros([nspl, npca])  # Work array for PCA.
-    xpcac = np.zeros([nspl, npca])  # Work array for PCA.
-    m = np.zeros(npca)  # Stores means.
-    medianf = np.zeros(npca)  # Stores medians.
-    badlist = []  # Indices of photometry with NaNs.
+        # Extract the aperture photometry.
+        flux[i], eflux[i], skybkg[i], eskybkg[i], _, fwhm[i], photflag[i] = extract(scidata, xall[i], yall[i])
 
-    ii = 0
-    for j in range(npca):
-        xpca[:, j] = [photometry[i][j]['aperture_sum']/exptime[i] for i in range(nspl)]  # Construct array.
-
-        if math.isnan(np.sum(xpca[:, j])) == False and all([j != x for x in id_exclude]):  # Require valid data.
-
-            # Deal with outliers.
-            darray = np.array(xpca[:, j])
-            icut = utils.cutoutliers(darray)
-            icut2 = utils.sigclip(darray, icut)
-            icut = icut + icut2
-            xpca[:, j] = utils.replaceoutlier(darray, icut)
-
-            medianf[j] = np.median(xpca[:, j])  # Median raw flux from star.
-
-            xpca[:, j] = xpca[:, j]/medianf[j]  # Divide by median.
-
-            m[j] = np.median(xpca[:, j])  # Calculate median-centered data set.
-
-            # print(j, medianf[j], m[j])
-
-            xpcac[:, j] = xpca[:, j] - m[j]  # Remove mean.
-            if medianf[j] > minflux:
-                ii = ii+1
-        else:
-            badlist.append(j)
-
-    xpcac_c = np.zeros([nspl, ii])
-    jj = -1
-    for j in range(npca):
-        if medianf[j] > minflux:
-            jj = jj+1
-            xpcac_c[:, jj] = xpcac[:, j]
-
-    print(nspl, ii)
-
-    # Calculate the co-variance matrix.
-    cov = np.zeros([ii, ii])
-    for i in range(ii):
-        for j in range(ii):
-            var = np.sum(xpcac_c[:, i]*xpcac_c[:, j])/nspl
-            cov[i, j] = var
-
-    ans = lapack.dgeev(cov)
-    vr = ans[3]
-    pcavec = np.matmul(xpcac_c, vr)
-    print("nbad", len(badlist))
-    print("bad/exclude list:", badlist)
-
-    return pcavec
+    return xall, yall, flux, eflux, skybkg, eskybkg, fwhm, photflag
 
 
-def get_master_phot4all(workdir, lightlist, jddate, transall, master_phot_table, photap, bpix):
-    """"""
+def align_images(image, target):
+    """Find the SimilaryTransform to align an input image with a target image."""
 
-    # Create arrays to store photometry.
-    photometry = []
-    photometry_jd = []
-
-    # Loop over all images.
-    for n2 in range(len(lightlist)):
-
-        # Get transformation matrix.
-        mat = np.array([[transall[n2][1][0][0], transall[n2][1][0][1]],
-                        [transall[n2][1][1][0], transall[n2][1][1][1]]])
-
-        if (np.abs(1.0-mat[0][0]) < 0.05) and (np.abs(1.0-mat[1][1]) < 0.05):  # Keep only sane transforms.
-
-            scidata = utils.read_fitsdata(os.path.join(workdir, lightlist[n2]))
-            mean, median, std = sigma_clipped_stats(scidata, sigma=3.0, maxiters=5)
-
-            # Get centroids.
-            x2 = np.array(master_phot_table['xcenter'][:])
-            y2 = np.array(master_phot_table['ycenter'][:])
-            # Invert transformation matix.
-            invmat = np.linalg.inv(mat)
-            # Get copy of original sources.
-            # sources_new = np.copy(sources)
-
-            # Apply transformation.
-            xnew = -transall[n2][0][0] + invmat[0][0]*x2 + invmat[0][1]*y2
-            ynew = -transall[n2][0][1] + invmat[1][0]*x2 + invmat[1][1]*y2
-
-            positions_new = np.column_stack([xnew, ynew])
-            apertures_new = CircularAperture(positions_new, r=photap)
-            phot_table_new = aperture_photometry(scidata - median, apertures_new)
-
-            photometry_jd.append(jddate[n2])
-            photometry.append(phot_table_new)
-
-    photometry_jd = np.array(photometry_jd)
-
-    return photometry, photometry_jd
-
-
-def pca_model(pars, pca):
-    """Our Model"""
-
-    m = pars[0]
-    for i in range(len(pars)-1):
-        # print(i, pca[:, i+1])
-        m = m + pars[i+1]*pca[:, i]
-
-    # print(m)
-    return m
-
-
-def pca_func(pars, phot, pca, icut):
-    """Residuals"""
-
-    m = pca_model(pars, pca)
-    npt = len(phot)
-    diff = []
-    for i in range(npt):
-        if icut[i] == 0:
-            diff.append(phot[i] - m[i])
-        else:
-            diff.append(0)
-
-    return diff
-
-
-def match_points(current_points, prior_points, distance_cutoff):
-    """
-    Takes in an nxd input vector of d-dimensional Euclidean coordinates representing the current dataset
-    and an mxd input vector of d-dimensional Euclidean cooridnates representing the prior dataset.
-    Output gives, for each row in _current_points, an mx2 vector that gives
-      - the index number from _prior_points in the first column,
-      - and distance matched in second.
-    If the matched distance is greater than the cutoff, consider the pair unmatched.
-    Unmatched points get -1 for the "matched" index number and the cutoff value for the distance (infinity).
-    """
-
-    # Initialize matched indices to -1 and distances to the cutoff value.
-    matches = -np.ones((current_points.shape[0], 2))
-    matches[:, 1] = distance_cutoff
-
-    # Initialize index numbers for current points
-    current_idx = np.asarray(range(current_points.shape[0]))
-    prior_idx = np.asarray(range(prior_points.shape[0]))
-
-    # Generate kd trees
-    curr_kd_tree = spatial.KDTree(current_points)
-    prior_kd_tree = spatial.KDTree(prior_points)
-
-    # Compute closest keypoint from current->prior and from prior->current
-    matches_a = prior_kd_tree.query(current_points)
-    matches_b = curr_kd_tree.query(prior_points)
-
-    # Mutual matches are the positive matches within the distance cutoff. All others unmatched.
-    potential_matches = matches_b[1][matches_a[1]]
-    matched_indices = np.equal(potential_matches, current_idx)
-
-    # Filter out matches that are more than the distance cutoff away.
-    in_bounds = (matches_a[0] <= distance_cutoff)
-    matched_indices = np.multiply(matched_indices, in_bounds)
-
-    # Add the matching data to the output
-    matches[current_idx[matched_indices], 0] = prior_idx[matches_a[1]][matched_indices].astype(np.int)
-    matches[current_idx[matched_indices], 1] = matches_a[0][matched_indices]
-
-    return matches
-
-
-def calctransprocess(x1, y1, f1, x2, y2, f2, n2m=10):
-    """"""
-
-    sortidx = np.argsort(f1)
-    maxf1 = f1[sortidx[np.max([len(f1)-n2m, 0])]]  # TODO use maximum instead of max.
-
-    sortidx = np.argsort(f2)
-    maxf2 = f2[sortidx[np.max([len(f2)-n2m, 0])]]  # TODO use maximum instead of max.
-
-    mask1 = f1 > maxf1
-    mask2 = f2 > maxf2
-
-    err, nm, matches = match(x1[mask1], y1[mask1], x2[mask2], y2[mask2])
-    if nm >= 3:
-        offset, rot = findtrans(nm, matches, x1[mask1], y1[mask1], x2[mask2], y2[mask2])
-    else:
+    try:
+        tform, (_, _) = astroalign.find_transform(image, target)
+    except astroalign.MaxIterError:
         offset = np.array([0, 0])
-        rot = np.array([[0, 0],
-                        [0, 0]])
-
-    return offset, rot
-
-
-def findtrans(nm, matches, x1, y1, x2, y2):
-    """"""
-
-    # Pre-allocate arrays.
-    # We are solving the problem A.x = b.
-    A = np.zeros([nm, 3])
-    bx = np.zeros(nm)
-    by = np.zeros(nm)
-
-    # Set up matricies.
-    A[:, 0] = 1
-    for n in range(nm):
-        A[n, 1] = x2[matches[n, 1]]
-        A[n, 2] = y2[matches[n, 1]]
-        bx[n] = x1[matches[n, 0]]
-        by[n] = y1[matches[n, 0]]
-
-    # Solve transformation with SVD.
-    u, s, vh = np.linalg.svd(A, full_matrices=False)
-    prd = np.transpose(vh)*1/s
-    prd = np.matmul(prd, np.transpose(u))
-    xoff = np.matmul(prd, bx)
-    yoff = np.matmul(prd, by)
-
-    # Store our solution for output.
-    offset = np.array([xoff[0], yoff[0]])
-    rot = np.array([[xoff[1], xoff[2]],
-                    [yoff[1], yoff[2]]])
-
-    # print(offset)
-    # print(rot)
-
-    return offset, rot
-
-
-def match(x1, y1, x2, y2, eps=1e-3):  # TODO this function could do with some clean-up.
-
-    # Defaults for return values.
-    err = 0.0
-    nm = 0.0
-    matches = []
-
-    xmax = np.max(np.concatenate([x1, x2]))  # Get max x,y position to get an idea how big the CCD frame is.
-    ymax = np.max(np.concatenate([y1, y2]))
-    xdim = np.power(2, np.floor(np.log2(xmax))+1)  # Estimate of CCD dimensions (assumes 2^n size).
-    ydim = np.power(2, np.floor(np.log2(ymax))+1)
-
-    # Tunable parameters for tolerence of matches.
-    eps2 = eps*xdim*eps*ydim
-
-    nx1 = len(x1)  # Number of stars in frame #1
-    nx2 = len(x2)  # Number of stars in frame #2
-    if nx2 < 4:
-        print('Matching Failed')
-        err = -1.0
-        return err, nm, matches
-    if nx1 < 4:
-        print('Matching Failed')
-        err = -1.0
-        return err, nm, matches
-
-    # Number of expected triangles = n!/[(n-3)! * 3!] (see Pascals Triangle)
-    ntri1 = int(np.math.factorial(nx1)/(np.math.factorial(nx1-3)*6))
-    ntri2 = int(np.math.factorial(nx2)/(np.math.factorial(nx2-3)*6))
-
-    # Pre-allocating arrays TODO These variable names are not very descriptive.
-    tA1 = np.zeros(ntri1, dtype=int)
-    tA2 = np.zeros(ntri1, dtype=int)
-    tA3 = np.zeros(ntri1, dtype=int)
-    tB1 = np.zeros(ntri2, dtype=int)
-    tB2 = np.zeros(ntri2, dtype=int)
-    tB3 = np.zeros(ntri2, dtype=int)
-    lpA = np.zeros(ntri1)
-    lpB = np.zeros(ntri2)
-    orA = np.zeros(ntri1, dtype=int)
-    orB = np.zeros(ntri2, dtype=int)
-    RA = np.zeros(ntri1)
-    RB = np.zeros(ntri2)
-    tolRA = np.zeros(ntri1)
-    tolRB = np.zeros(ntri2)
-    CA = np.zeros(ntri1)
-    CB = np.zeros(ntri2)
-    tolCA = np.zeros(ntri1)
-    tolCB = np.zeros(ntri2)
-
-    # Make all possible triangles for A set of co-ordinates.
-    # TODO this repeats for the B set, can this be made a function?
-    nt1 = -1  # Count number of triangles.
-    for n1 in range(nx1-2):
-        for n2 in range(n1+1, nx1-1):
-            for n3 in range(n2+1, nx1):
-                nt1 = nt1+1  # Increase counter for triangles.
-
-                # Calculate distances.
-                tp1 = np.sqrt(np.power(x1[n1]-x1[n2], 2)+np.power(y1[n1]-y1[n2], 2))
-                tp2 = np.sqrt(np.power(x1[n2]-x1[n3], 2)+np.power(y1[n2]-y1[n3], 2))
-                tp3 = np.sqrt(np.power(x1[n3]-x1[n1], 2)+np.power(y1[n3]-y1[n1], 2))
-
-                # Beware of equal distance cases?
-                if tp1 == tp2:
-                    tp1 = tp1 + 0.0001
-                if tp1 == tp3:
-                    tp1 = tp1 + 0.0001
-                if tp2 == tp3:
-                    tp2 = tp2 + 0.0001
-
-                # There are now six cases.
-                if (tp1 > tp2) and (tp2 > tp3):
-                    tA1[nt1] = np.copy(n1)
-                    tA2[nt1] = np.copy(n3)
-                    tA3[nt1] = np.copy(n2)
-                    r3 = np.copy(tp1)  # Long length, (Equations 2 and 3).
-                    r2 = np.copy(tp3)  # Short side.
-                elif (tp1 > tp3) and (tp3 > tp2):
-                    tA1[nt1] = np.copy(n2)
-                    tA2[nt1] = np.copy(n3)
-                    tA3[nt1] = np.copy(n1)
-                    r3 = np.copy(tp1)
-                    r2 = np.copy(tp2)
-                elif (tp2 > tp1) and (tp1 > tp3):
-                    tA1[nt1] = np.copy(n3)
-                    tA2[nt1] = np.copy(n1)
-                    tA3[nt1] = np.copy(n2)
-                    r3 = np.copy(tp2)
-                    r2 = np.copy(tp3)
-                elif (tp3 > tp1) and (tp1 > tp2):
-                    tA1[nt1] = np.copy(n3)
-                    tA2[nt1] = np.copy(n2)
-                    tA3[nt1] = np.copy(n1)
-                    r3 = np.copy(tp3)
-                    r2 = np.copy(tp2)
-                elif (tp2 > tp3) and (tp3 > tp1):
-                    tA1[nt1] = np.copy(n2)
-                    tA2[nt1] = np.copy(n1)
-                    tA3[nt1] = np.copy(n3)
-                    r3 = np.copy(tp2)
-                    r2 = np.copy(tp1)
-                elif (tp3 > tp2) and (tp2 > tp1):
-                    tA1[nt1] = np.copy(n1)
-                    tA2[nt1] = np.copy(n2)
-                    tA3[nt1] = np.copy(n3)
-                    r3 = np.copy(tp3)
-                    r2 = np.copy(tp1)
-
-                # Equation 1
-                RA[nt1] = r3/r2
-                # Equation 5
-                CA[nt1] = ((x1[tA3[nt1]]-x1[tA1[nt1]])*(x1[tA2[nt1]]-x1[tA1[nt1]]) +
-                           (y1[tA3[nt1]]-y1[tA1[nt1]])*(y1[tA2[nt1]]-y1[tA1[nt1]]))/(r3*r2)
-                # Equation 4
-                fact = np.power(1/r3, 2)-CA[nt1]/(r3*r2)+1/np.power(r2, 2)
-                tolRA[nt1] = 2*np.power(RA[nt1], 2)*eps2*fact
-                # Equation 6
-                S2 = 1-np.power(CA[nt1], 2)  # Sine squared.
-                tolCA[nt1] = 2*S2*eps2*fact+3*np.power(CA[nt1], 2)*eps2*eps2*np.power(fact, 2)
-                # Logarithm of triangle perimeter.
-                lpA[nt1] = np.log10(tp1+tp2+tp3)
-                # Orientation of triangle (-1=counterclockwise +1=clockwise).
-                orA[nt1] = orient(x1[n1], y1[n1], x1[n2], y1[n2], x1[n3], y1[n3])
-
-    # Make all possible triangles for B set of co-ordinates.
-    nt2 = -1  # Count number of triangles.
-    for n1 in range(nx2-2):
-        for n2 in range(n1+1, nx2-1):
-            for n3 in range(n2+1, nx2):
-                nt2 = nt2+1  # Increase counter for triangles.
-
-                # Calculate distances.
-                tp1 = np.sqrt(np.power(x2[n1]-x2[n2], 2)+np.power(y2[n1]-y2[n2], 2))
-                tp2 = np.sqrt(np.power(x2[n2]-x2[n3], 2)+np.power(y2[n2]-y2[n3], 2))
-                tp3 = np.sqrt(np.power(x2[n3]-x2[n1], 2)+np.power(y2[n3]-y2[n1], 2))
-
-                # beware of equal distance cases?
-                if tp1 == tp2:
-                    tp1 = tp1+0.0001
-                if tp1 == tp3:
-                    tp1 = tp1+0.0001
-                if tp2 == tp3:
-                    tp2 = tp2+0.0001
-
-                # there are now six cases
-                if (tp1 > tp2) and (tp2 > tp3):
-                    tB1[nt2] = np.copy(n1)
-                    tB2[nt2] = np.copy(n3)
-                    tB3[nt2] = np.copy(n2)
-                    r3 = np.copy(tp1)  # Long length, (Equations 2 and 3).
-                    r2 = np.copy(tp3)  # Short side.
-                elif (tp1 > tp3) and (tp3 > tp2):
-                    tB1[nt2] = np.copy(n2)
-                    tB2[nt2] = np.copy(n3)
-                    tB3[nt2] = np.copy(n1)
-                    r3 = np.copy(tp1)
-                    r2 = np.copy(tp2)
-                elif (tp2 > tp1) and (tp1 > tp3):
-                    tB1[nt2] = np.copy(n3)
-                    tB2[nt2] = np.copy(n1)
-                    tB3[nt2] = np.copy(n2)
-                    r3 = np.copy(tp2)
-                    r2 = np.copy(tp3)
-                elif (tp3 > tp1) and (tp1 > tp2):
-                    tB1[nt2] = np.copy(n3)
-                    tB2[nt2] = np.copy(n2)
-                    tB3[nt2] = np.copy(n1)
-                    r3 = np.copy(tp3)
-                    r2 = np.copy(tp2)
-                elif (tp2 > tp3) and (tp3 > tp1):
-                    tB1[nt2] = np.copy(n2)
-                    tB2[nt2] = np.copy(n1)
-                    tB3[nt2] = np.copy(n3)
-                    r3 = np.copy(tp2)
-                    r2 = np.copy(tp1)
-                elif (tp3 > tp2) and (tp2 > tp1):
-                    tB1[nt2] = np.copy(n1)
-                    tB2[nt2] = np.copy(n2)
-                    tB3[nt2] = np.copy(n3)
-                    r3 = np.copy(tp3)
-                    r2 = np.copy(tp1)
-
-                # Equation 1
-                RB[nt2] = r3/r2
-                # Equation 5
-                CB[nt2] = ((x2[tB3[nt2]]-x2[tB1[nt2]])*(x2[tB2[nt2]]-x2[tB1[nt2]]) +
-                           (y2[tB3[nt2]]-y2[tB1[nt2]])*(y2[tB2[nt2]]-y2[tB1[nt2]]))/(r3*r2)
-                # Equation 4
-                fact = np.power(1/r3, 2)-CB[nt2]/(r3*r2)+1/np.power(r2, 2)
-                tolRB[nt2] = 2*np.power(RB[nt2], 2)*eps2*fact
-                # Equation 6
-                S2 = 1-np.power(CB[nt2], 2)  # Sine of angle squared.
-                tolCB[nt2] = 2*S2*eps2*fact+3*np.power(CB[nt2], 2)*eps2*eps2*np.power(fact, 2)
-                # Logarithm of triangle perimeter.
-                lpB[nt2] = np.log10(tp1+tp2+tp3)
-                # Orientation of triangle (-1=counterclockwise +1=clockwise).
-                orB[nt2] = orient(x2[n1], y2[n1], x2[n2], y2[n2], x2[n3], y2[n3])
-
-    # Scan through the two.
-    nmatch = 0
-    for n1 in range(nt1):
-        n3 = 0  # we only want the best matched triangle
-        for n2 in range(nt2):
-            diffR = np.power(RA[n1]-RB[n2], 2)
-            if (diffR < (tolRA[n1]+tolRB[n2])) and ((np.power(CA[n1]-CB[n2], 2)) < (tolCA[n1]+tolCB[n2])):
-                if (RA[n1] < 10) and (RB[n2] < 10):
-                    if n3 == 0:
-                        nmatch = nmatch+1
-                        n3 = 1
-
-    # print("nmatch", nmatch)
-
-    # Now we know the number of matches, so we preallocate and repeat.
-    # This seems to be faster?!?
-    mA = np.zeros(nmatch, dtype=int)  # Store indices at integers.
-    mB = np.zeros(nmatch, dtype=int)
-    lmag = np.zeros(nmatch)
-    orcomp = np.zeros(nmatch, dtype=int)
-
-    # Repeating the calculation from above.
-    # Scan through the two lists and find matches.
-    nmatch = -1
-    diffRold = 0
-    for n1 in range(nt1):
-        n3 = 0  # We only want the best matched triangle.
-        for n2 in range(nt2):
-            diffR = np.power(RA[n1]-RB[n2], 2)
-            if (diffR < (tolRA[n1]+tolRB[n2])) and ((np.power(CA[n1]-CB[n2], 2)) < (tolCA[n1]+tolCB[n2])):
-                if (RA[n1] < 10) and (RB[n2] < 10):
-                    if n3 == 0:
-                        nmatch = nmatch+1
-                        n3 = 1
-                        mA[nmatch] = np.copy(n1)
-                        mB[nmatch] = np.copy(n2)
-                        lmag[nmatch] = lpA[n1]-lpB[n2]
-                        orcomp[nmatch] = orA[n1]*orB[n2]
-                        diffRold = np.copy(diffR)
-                    else:
-                        if diffR < diffRold:
-                            mA[nmatch] = np.copy(n1)
-                            mB[nmatch] = np.copy(n2)
-                            lmag[nmatch] = lpA[n1]-lpB[n2]
-                            orcomp[nmatch] = orA[n1]*orB[n2]
-                            diffRold = np.copy(diffR)
-
-    # print(nmatch, mA[nmatch], mB[nmatch])
-
-    nmatchold = 0
-    nplus = 0
-    nminus = 0
-    while nmatch != nmatchold:
-        nplus = np.sum(orcomp == 1)
-        nminus = np.sum(orcomp == -1)
-
-        mt = np.abs(nplus-nminus)
-        mf = nplus+nminus-mt
-        if mf > mt:
-            sigma = 1
-        elif 0.1*mf > mf:
-            sigma = 3
-        else:
-            sigma = 2
-        meanmag = np.mean(lmag)
-        stdev = np.std(lmag)
-
-        datacut = (lmag - meanmag < sigma*stdev)
-        mA = mA[datacut]
-        mB = mB[datacut]
-        lmag = lmag[datacut]
-        orcomp = orcomp[datacut]
-
-        nmatchold = np.copy(nmatch)
-        nmatch = len(mA)
-
-    if nplus > nminus:
-        datacut = (orcomp == 1)
+        rot = np.array([[1, 0],
+                        [0, 1]])
+        success = False
     else:
-        datacut = (orcomp == -1)
+        offset = tform.translation
+        rot = tform.params[:2, :2]
+        success = True
 
-    mA = mA[datacut]
-    mB = mB[datacut]
-    lmag = lmag[datacut]
-    orcomp = orcomp[datacut]
-    nmatch = len(mA)
-
-    n = np.max([nt1, nt2])  # Max expected size.
-    votearray = np.zeros([n, n], dtype=int)
-
-    for n1 in range(nmatch):
-        votearray[tA1[mA[n1]], tB1[mB[n1]]] = votearray[tA1[mA[n1]], tB1[mB[n1]]] + 1  # Does += work in this case?
-        votearray[tA2[mA[n1]], tB2[mB[n1]]] = votearray[tA2[mA[n1]], tB2[mB[n1]]] + 1
-        votearray[tA3[mA[n1]], tB3[mB[n1]]] = votearray[tA3[mA[n1]], tB3[mB[n1]]] + 1
-
-    # print(votearray)
-
-    n2 = votearray.shape[0]*votearray.shape[1]
-    votes = np.zeros([n2, 3], dtype=int)
-
-    # cnt1 = 1
-    # cnt2 = 1
-    # for n1 in range(n2):
-    #     votes[n1, 1] = np.copy(votearray.flatten('F')[n1])
-    #     votes[n1, 2] = np.copy(cnt1)
-    #     votes[n1, 3] = np.copy(cnt2)
-    #     cnt1 = cnt1+1
-    #     if cnt1 > n:
-    #         cnt1 = 1
-    #         cnt2 = cnt2+1
-
-    i = -1
-    for i1 in range(n):
-        for i2 in range(n):
-            i = i+1
-            votes[i, 0] = np.copy(votearray[i1, i2])
-            votes[i, 1] = np.copy(i1)
-            votes[i, 2] = np.copy(i2)
-
-    votes = votes[np.argsort(votes[:, 0])]
-
-    # Pre-allocated arrays.
-    matches = np.zeros([n, 2], dtype=int)
-    matchedx = np.zeros(n, dtype=int)  # Make sure stars are not assigned twice.
-    matchedy = np.zeros(n, dtype=int)
-
-    n1 = np.copy(n2)-1
-    # print("votes", votes[0, 0])  # <--- this gives the maximum vote!
-    maxvote = votes[n1, 0]
-    # print("votes", maxvote)
-
-    if maxvote <= 1:
-        err = 1
-        print('Matching Failed')
-
-    nm = -1
-    loop = 1  # Loop flag.
-    while loop == 1:
-        nm = nm+1  # Count number of matches.
-        # print(matchedx[votes[n1, 1]], matchedy[votes[n1, 2]])
-        if (matchedx[votes[n1, 1]] > 0) or (matchedy[votes[n1, 2]] > 0):
-            loop = 0  # Break from loop. TODO use python break, elsewhere in loop as well
-            nm = nm-1  # Correct counter. TODO or only count after success?
-        else:
-            matches[nm, 0] = np.copy(votes[n1, 1])
-            matches[nm, 1] = np.copy(votes[n1, 2])
-            matchedx[votes[n1, 1]] = 1
-            matchedy[votes[n1, 2]] = 1
-
-        # When number of votes falls below half of max, then exit.
-        if votes[n1-1, 0]/maxvote < 0.5:
-            loop = 0
-        if votes[n1-1, 0] == 0:
-            loop = 0  # No more votes left, so exit.
-
-        n1 = n1-1  # Decrease counter.
-        if n1 == 0:
-            loop = 0  # Break fron loop.
-        if nm >= n1-1:
-            loop = 0  # Everything should of been matched by now.
-
-    nm = nm+1
-
-    return err, nm, matches
+    return offset, rot, success
 
 
-def orient(ax, ay, bx, by, cx, cy):
+def image_stack(workdir, lightlist, offset, rot, nstack=100):
+
+    # Check that we can reach the requested stack depth.
+    nobs = len(lightlist)
+    nimg = np.minimum(nobs, nstack)
+
+    # Obtain the shape of the images.
+    filename = os.path.join(workdir, lightlist[0])
+    scidata = utils.read_fitsdata(filename)
+    nrows, ncols = scidata.shape
+
+    # Pre-allocate the array.
+    stack = np.zeros((nimg, nrows, ncols))
+
+    # Select images for use in the stack. TODO could be more sophisticated.
+    step = int(np.floor(nobs/nstack))
+    step = np.maximum(step, 1)
+    gidx = np.arange(nobs)[::step][:nimg]
+
+    for i, idx in enumerate(gidx):
+
+        # Read the science image.
+        filename = os.path.join(workdir, lightlist[idx])
+        scidata = utils.read_fitsdata(filename)
+
+        # Prepare the transformation matrix.
+        matrix = np.eye(3)
+        matrix[0][0] = rot[idx, 0, 0]
+        matrix[0][1] = rot[idx, 0, 1]
+        matrix[0][2] = offset[idx, 0]
+
+        matrix[1][0] = rot[idx, 1, 0]
+        matrix[1][1] = rot[idx, 1, 1]
+        matrix[1][2] = offset[idx, 1]
+
+        # Transform the image and add it to the stack.
+        tform = transform.AffineTransform(matrix)
+        stack[i] = transform.warp(scidata, tform.inverse, cval=np.nan)
+
+    # Get the master image.
+    stack = stack - np.nanmedian(stack, axis=(1, 2), keepdims=True)
+    stack_med = np.nanmedian(stack, axis=0)
+
+    return stack_med
+
+
+def flag_tracking(ra_vel, dec_vel, imgflag, nstd=3.0):
     """"""
 
-    c = 0  # If c stays as zero, then we missed a case!
+    # Find RA_VEL outliers.
+    _, median, stddev = sigma_clipped_stats(ra_vel)
+    mask = np.abs(ra_vel - median) < nstd*stddev
+    imgflag = np.where(mask, imgflag, imgflag + 1)
 
-    avgx = (ax+bx+cx)/3
-    avgy = (ay+by+cy)/3
+    # Find DEC_VEL outliers.
+    _, median, stddev = sigma_clipped_stats(dec_vel)
+    mask = np.abs(dec_vel - median) < nstd*stddev
+    imgflag = np.where(mask, imgflag, imgflag + 2)
 
-    # Discover quadrants for each point of triangle. TODO three identical code blocks, make function?
-    if (ax-avgx >= 0) and (ay-avgy >= 0): q1 = 1
-    if (ax-avgx >= 0) and (ay-avgy < 0): q1 = 2
-    if (ax-avgx < 0) and (ay-avgy < 0): q1 = 3
-    if (ax-avgx < 0) and (ay-avgy >= 0): q1 = 4
-
-    if (bx-avgx >= 0) and (by-avgy >= 0): q2 = 1
-    if (bx-avgx >= 0) and (by-avgy < 0): q2 = 2
-    if (bx-avgx < 0) and (by-avgy < 0): q2 = 3
-    if (bx-avgx < 0) and (by-avgy >= 0): q2 = 4
-
-    if (cx-avgx >= 0) and (cy-avgy >= 0): q3 = 1
-    if (cx-avgx >= 0) and (cy-avgy < 0): q3 = 2
-    if (cx-avgx < 0) and (cy-avgy < 0): q3 = 3
-    if (cx-avgx < 0) and (cy-avgy >= 0): q3 = 4
-
-    if (q1 == 1) and (q2 == 2):  # TODO Again 3 identical blocks, make a function?
-        c = +1
-    elif (q1 == 1) and (q2 == 4):
-        c = -1
-    elif (q1 == 2) and (q2 == 3):
-        c = +1
-    elif (q1 == 2) and (q2 == 1):
-        c = -1
-    elif (q1 == 3) and (q2 == 4):
-        c = +1
-    elif (q1 == 3) and (q2 == 2):
-        c = -1
-    elif (q1 == 4) and (q2 == 1):
-        c = +1
-    elif (q1 == 4) and (q2 == 3):
-        c = -1
-
-    if c == 0:
-        if (q2 == 1) and (q3 == 2):
-            c = +1
-        elif (q2 == 1) and (q3 == 4):
-            c = -1
-        elif (q2 == 2) and (q3 == 3):
-            c = +1
-        elif (q2 == 2) and (q3 == 1):
-            c = -1
-        elif (q2 == 3) and (q3 == 4):
-            c = +1
-        elif (q2 == 3) and (q3 == 2):
-            c = -1
-        elif (q2 == 4) and (q3 == 1):
-            c = +1
-        elif (q2 == 4) and (q3 == 3):
-            c = -1
-
-    if c == 0:
-        if (q3 == 1) and (q1 == 2):
-            c = +1
-        elif (q3 == 1) and (q1 == 4):
-            c = -1
-        elif (q3 == 2) and (q1 == 3):
-            c = +1
-        elif (q3 == 2) and (q1 == 1):
-            c = -1
-        elif (q3 == 3) and (q1 == 4):
-            c = +1
-        elif (q3 == 3) and (q1 == 2):
-            c = -1
-        elif (q3 == 4) and (q1 == 1):
-            c = +1
-        elif (q3 == 4) and (q1 == 3):
-            c = -1
-
-    if (c == 0) and (q1 == q2):  # TODO And another block of three.
-        dydx1 = (ay-cy)/(ax-cx)
-        dydx2 = (by-cy)/(bx-cx)
-        if q1 == 1:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q1 == 2:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q1 == 3:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q1 == 4:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-
-    if (c == 0) and (q2 == q3):
-        dydx1 = (by-ay)/(bx-ax)
-        dydx2 = (cy-ay)/(cx-ax)
-        if q2 == 1:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q2 == 2:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q2 == 3:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-        elif q2 == 4:
-            if dydx2 >= dydx1:
-                c = -1
-            else:
-                c = +1
-
-    if (c == 0) and (q1 == q3):
-        dydx1 = (ay-by)/(ax-bx)
-        dydx2 = (cy-by)/(cx-bx)
-        if q3 == 1:
-            if dydx1 >= dydx2:
-                c = -1
-            else:
-                c = +1
-        elif q3 == 2:
-            if dydx1 >= dydx2:
-                c = -1
-            else:
-                c = +1
-        elif q3 == 3:
-            if dydx1 >= dydx2:
-                c = -1
-            else:
-                c = +1
-        elif q3 == 4:
-            if dydx1 >= dydx2:
-                c = -1
-            else:
-                c = +1
-
-    return c
+    return imgflag
 
 
-def photo_centroid(scidata, bpix, starlist, ndp, dcoocon, itermax):
+def flag_transforms(offset, rot, success, imgflag, nstd=3.0, maxiter=5):
     """"""
 
-    # scidata_masked = np.ma.array(scidata, mask=scidata < bpix)
-    starlist_cen = np.copy(starlist)
-    nstar = len(starlist)
+    # Flag transformations where the matching failed.
+    imgflag = np.where(success, imgflag, imgflag + 4)
 
-    for i in range(nstar):
+    # Flag bad rotations.
+    mask = (np.abs(1.0 - rot[:, 0, 0]) < 0.05) & (np.abs(1.0 - rot[:, 1, 1]) < 0.05)
+    imgflag = np.where(mask, imgflag, imgflag + 8)
 
-        xcoo = np.float(starlist[i][1])  # Get current centroid info and move into float.
-        ycoo = np.float(starlist[i][0])
+    # Flag bad offsets.
+    mask = imgflag < 1  # Start by using only the currently unflagged images.
+    for niter in range(maxiter):
 
-        dcoo = dcoocon + 1
-        niter = 0
+        xmed = np.nanmedian(offset[mask, 0])
+        ymed = np.nanmedian(offset[mask, 1])
+        radius_sq = (offset[:, 0] - xmed)**2 + (offset[:, 1] - ymed)**2
 
-        while (dcoo > dcoocon and niter < itermax):  # TODO check how this evaluates.
+        stddev = np.sqrt(np.mean(radius_sq[mask]))
+        radius = np.sqrt(radius_sq)
 
-            xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
-            ycoo1 = np.copy(ycoo)
+        mask = radius < nstd*stddev
 
-            # Update centroid.
-            j1 = int(xcoo) - ndp
-            j2 = int(xcoo) + ndp
-            k1 = int(ycoo) - ndp
-            k2 = int(ycoo) + ndp
-            sumx = 0.0
-            sumy = 0.0
-            fsum = 0.0
-            for j in range(j1, j2):  # TODO I think this can be done without the loops.
-                for k in range(k1, k2):
-                    sumx = sumx + scidata[j, k]*(j+1)
-                    sumy = sumy + scidata[j, k]*(k+1)
-                    fsum = fsum + scidata[j, k]
+    imgflag = np.where(mask, imgflag, imgflag + 16)
 
-            xcoo = sumx/fsum
-            ycoo = sumy/fsum
-
-            dxcoo = np.abs(xcoo - xcoo1)
-            dycoo = np.abs(ycoo - ycoo1)
-            dcoo = np.sqrt(dxcoo*dxcoo + dycoo*dycoo)
-
-            xcoo1 = np.copy(xcoo)  # Make a copy of current position to evaluate change.
-            ycoo1 = np.copy(ycoo)
-
-            niter = niter + 1
-
-            # print(dxcoo, dycoo, dcoo)
-
-        starlist_cen[i][1] = xcoo
-        starlist_cen[i][0] = ycoo
-
-    return starlist_cen
+    return imgflag
 
 
-def phot_simple(scidata, starlist, bpix, sbox, sky):
+def extract_photometry(workdir, outname, **kwargs):
+    """"""
 
-    boxsum = []  # Store photometry in a list. TODO always initialize arrays when size is known.
+    bpix = kwargs.pop('bpix', -1.0e10)
+    nproc = kwargs.pop('nproc', 4)
+    margin = kwargs.pop('margin', 10)
+    nmax = kwargs.pop('nmax', 100)  # TODO should probably be None.
 
-    masked_scidata = np.ma.array(scidata, mask=scidata < bpix)  # Mask out bad pixels.
+    obs_table = utils.observation_table([workdir], globstr='NEOS_*_cord.fits', header_keys=['RA_VEL', 'DEC_VEL', 'CCD-TEMP'])
+    nobs = len(obs_table)
 
-    nstar = len(starlist)  # Number of stars.
+    # Creat an image flag and flag bad tracking.
+    obs_table['imgflag'] = np.zeros(len(obs_table), dtype='uint8')
+    obs_table['imgflag'] = flag_tracking(obs_table['RA_VEL'], obs_table['DEC_VEL'], obs_table['imgflag'])
 
-    for i in range(nstar):
+    # Perform image matching.
+    print('Aligning the observations.')
 
-        xcoo = np.float(starlist[i][1])  # Position of star.
-        ycoo = np.float(starlist[i][0])
+    # Select the middle unflagged image as the reference for aligning the images.
+    mask = obs_table['imgflag'] == 0
+    goodfiles = obs_table['FILENAME'][mask]
 
-        j1 = int(xcoo) - sbox  # Dimensions of photometric box.
-        j2 = int(xcoo) + sbox
-        k1 = int(ycoo) - sbox
-        k2 = int(ycoo) + sbox
+    nmaster = len(goodfiles)//2
+    filename = goodfiles[nmaster]
 
-        bsum = np.sum(masked_scidata[j1:j2, k1:k2])  # Total flux inside box.
-        npix = np.sum(masked_scidata[j1:j2, k1:k2]/masked_scidata[j1:j2, k1:k2])  # Number of pixels.
+    target = utils.read_fitsdata(filename)
 
-        boxsum.append(bsum - npix*sky)  # Sky corrected flux measurement.
+    # Plot the target image.
+    imstat = utils.imagestat(target, bpix)
+    figname = os.path.join(workdir, outname + '_targetimage.png')
+    visualize.plot_image(target, imstat, 1.0, 50.0, figname=figname, display=False)
 
-    return boxsum
+    pbar = tqdm.tqdm(total=nobs)
+    results = []
+    with mp.Pool(nproc) as p:
+
+        for i in range(nobs):
+
+            filename = obs_table['FILENAME'][i]
+            image = utils.read_fitsdata(filename)
+
+            args = (image, target)
+            results.append(p.apply_async(align_images, args=args, callback=lambda x: pbar.update()))
+
+        p.close()
+        p.join()
+
+        offset = np.zeros((nobs, 2))
+        rot = np.zeros((nobs, 2, 2))
+        success = np.zeros((nobs,), dtype='bool')
+        for i in range(nobs):
+            offset[i], rot[i], success[i] = results[i].get()
+
+    pbar.close()
+
+    # Add transformations to the obs_table and flag bad transformations.
+    obs_table['offset'] = offset
+    obs_table['rot'] = rot
+    obs_table['imgflag'] = flag_transforms(offset, rot, success, obs_table['imgflag'])
+
+    # Create a masterimage.
+    print('Creating the masterimage.')
+    mask = obs_table['imgflag'] == 0
+    master_image = image_stack('.', obs_table['FILENAME'][mask], obs_table['offset'][mask], obs_table['rot'][mask])
+
+    # Save the masterimage.
+    mastername = os.path.join(workdir, outname + '_masterimage.fits')
+    hdu = fits.PrimaryHDU(master_image)
+    hdu.writeto(mastername, overwrite=True)
+
+    # Create master photometry list.
+    print('Creating master photometry list.')
+    sources = find_sources(master_image, margin=margin, nmax=nmax)
+
+    # Plot the masterimage.
+    imstat = utils.imagestat(master_image, bpix)
+    figname = os.path.join(workdir, outname + '_masterimage.png')
+    visualize.plot_image_wsource(master_image, imstat, 1.0, 50.0, sources, figname=figname, display=False)
+
+    # Extract photometry.
+    print('Extracting photometry.')
+    xref = np.array(sources['xcentroid'][:])
+    yref = np.array(sources['ycentroid'][:])
+    xall, yall, flux, eflux, skybkg, eskybkg, fwhm, photflag = get_photometry('.', obs_table['FILENAME'], xref, yref,
+                                                                              obs_table['offset'], obs_table['rot'])
+
+    # Save the output.
+    columns = (xall, yall, flux, eflux, skybkg, eskybkg, fwhm, photflag)
+    colnames = ('x', 'y', 'flux', 'eflux', 'skybkg', 'eskybkg', 'fwhm', 'photflag')
+    obs_table.add_columns(columns, names=colnames)
+    tablename = os.path.join(workdir, outname + '_photometry.fits')
+    obs_table.write(tablename, overwrite=True)
+
+    return
+
+
+def main():
+
+    return
+
+
+if __name__ == '__main__':
+    main()
